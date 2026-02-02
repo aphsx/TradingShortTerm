@@ -60,7 +60,9 @@ func main() {
 	log.Println("✅ Backend is running!")
 	log.Println("📊 Dynamic multi-symbol streaming enabled")
 	log.Println("🌐 HTTP Server: http://localhost:8080")
-	log.Println("🔌 WebSocket: ws://localhost:8080/api/price?symbol=BTCUSDT")
+	log.Println("🔌 WebSocket Price: ws://localhost:8080/api/price?symbol=BTCUSDT")
+	log.Println("🕯️  WebSocket Klines: ws://localhost:8080/api/kline?symbol=BTCUSDT&interval=1m")
+	log.Println("📈 REST Klines: http://localhost:8080/api/klines?symbol=BTCUSDT&interval=1m&limit=500")
 	log.Println("💡 Streamers start automatically when clients connect")
 	log.Println("Press Ctrl+C to stop")
 
