@@ -9,6 +9,7 @@ export function TradingChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<any>(null)
+  const hasSeriesCreated = useRef(false)
   
   const isConnected = useTradingStore((state) => state.isConnected)
   const currentPrice = useTradingStore((state) => state.currentPrice)
@@ -19,8 +20,22 @@ export function TradingChart() {
       return
     }
 
+    // If chart already exists, don't recreate it
+    if (chartRef.current && hasSeriesCreated.current) {
+      return
+    }
+
     try {
       const container = chartContainerRef.current
+      
+      // Clear any existing chart
+      if (chartRef.current) {
+        chartRef.current.remove()
+        chartRef.current = null
+        seriesRef.current = null
+        hasSeriesCreated.current = false
+      }
+
       const width = container.clientWidth
       const height = container.clientHeight || 500
 
@@ -66,6 +81,7 @@ export function TradingChart() {
 
       chartRef.current = chart
       seriesRef.current = lineSeries
+      hasSeriesCreated.current = true
 
       const handleResize = (): void => {
         if (chartContainerRef.current && chartRef.current) {
@@ -79,7 +95,12 @@ export function TradingChart() {
 
       return () => {
         window.removeEventListener('resize', handleResize)
-        chart.remove()
+        if (chartRef.current) {
+          chartRef.current.remove()
+          chartRef.current = null
+          seriesRef.current = null
+          hasSeriesCreated.current = false
+        }
       }
     } catch (error) {
       console.error('Error initializing chart:', error)
