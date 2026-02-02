@@ -9,6 +9,7 @@ import (
 
 	"github.com/aphis/24hrt-backend/client"
 	"github.com/aphis/24hrt-backend/config"
+	"github.com/aphis/24hrt-backend/server"
 	"github.com/aphis/24hrt-backend/websocket"
 )
 
@@ -47,6 +48,16 @@ func main() {
 		}
 	}
 
+	// Create HTTP server for Electron communication
+	httpServer := server.NewServer()
+
+	// Start HTTP server in a goroutine
+	go func() {
+		if err := httpServer.Start("8080"); err != nil {
+			log.Printf("❌ HTTP server error: %v", err)
+		}
+	}()
+
 	// Start WebSocket price stream
 	priceStreamer := websocket.NewPriceStreamer(cfg.DefaultSymbol)
 	if err := priceStreamer.Start(); err != nil {
@@ -55,11 +66,14 @@ func main() {
 	}
 	defer priceStreamer.Stop()
 
-	// Handle price updates
+	// Handle price updates and send to HTTP server
 	go func() {
 		for update := range priceStreamer.GetUpdateChannel() {
-			// This is where you'd send updates to Electron frontend
-			log.Printf("💰 Price Update: %s = %s", update.Symbol, update.Price)
+			// Send price to all connected WebSocket clients (Electron)
+			httpServer.SendPrice(update.Symbol, update.Price, update.Timestamp)
+			
+			// Log occasionally for debugging (uncomment if needed)
+			// log.Printf("💰 Price Update: %s = %s", update.Symbol, update.Price)
 		}
 	}()
 
@@ -72,6 +86,8 @@ func main() {
 
 	log.Println("✅ Backend is running!")
 	log.Printf("📊 Watching %s price updates...", cfg.DefaultSymbol)
+	log.Println("🌐 HTTP Server: http://localhost:8080")
+	log.Println("🔌 WebSocket: ws://localhost:8080/api/price")
 	log.Println("Press Ctrl+C to stop")
 
 	// Wait for interrupt signal
