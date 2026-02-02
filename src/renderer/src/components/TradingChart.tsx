@@ -1,0 +1,105 @@
+import { useEffect, useRef } from 'react'
+import { createChart, IChartApi, ISeriesApi, CandlestickData, Time } from 'lightweight-charts'
+import { useTradingStore } from '../store/trading'
+
+export function TradingChart(): JSX.Element {
+  const chartContainerRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<IChartApi | null>(null)
+  const seriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  
+  const currentPrice = useTradingStore((state) => state.currentPrice)
+  const isConnected = useTradingStore((state) => state.isConnected)
+
+  // Initialize chart
+  useEffect(() => {
+    if (!chartContainerRef.current) return
+
+    const chart = createChart(chartContainerRef.current, {
+      width: chartContainerRef.current.clientWidth,
+      height: 400,
+      layout: {
+        background: { color: '#1e1e1e' },
+        textColor: '#d1d4dc'
+      },
+      grid: {
+        vertLines: { color: '#2b2b2b' },
+        horzLines: { color: '#2b2b2b' }
+      },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false
+      }
+    })
+
+    const lineSeries = chart.addLineSeries({
+      color: '#2962FF',
+      lineWidth: 2
+    })
+
+    chartRef.current = chart
+    seriesRef.current = lineSeries
+
+    // Handle window resize
+    const handleResize = (): void => {
+      if (chartContainerRef.current && chartRef.current) {
+        chartRef.current.applyOptions({
+          width: chartContainerRef.current.clientWidth
+        })
+      }
+    }
+
+    window.addEventListener('resize', handleResize)
+
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      chart.remove()
+    }
+  }, [])
+
+  // Update chart with new price data
+  useEffect(() => {
+    if (!seriesRef.current || !currentPrice) return
+
+    const dataPoint = {
+      time: Math.floor(currentPrice.timestamp / 1000) as Time,
+      value: parseFloat(currentPrice.price)
+    }
+
+    seriesRef.current.update(dataPoint)
+  }, [currentPrice])
+
+  return (
+    <div style={{ width: '100%', height: '100%' }}>
+      <div style={{ 
+        padding: '10px', 
+        background: '#1e1e1e', 
+        color: '#fff',
+        borderBottom: '1px solid #2b2b2b'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          <div>
+            <span style={{ color: '#888' }}>Status: </span>
+            <span style={{ color: isConnected ? '#4caf50' : '#f44336' }}>
+              {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+            </span>
+          </div>
+          {currentPrice && (
+            <>
+              <div>
+                <span style={{ color: '#888' }}>Symbol: </span>
+                <span style={{ fontWeight: 'bold' }}>{currentPrice.symbol}</span>
+              </div>
+              <div>
+                <span style={{ color: '#888' }}>Price: </span>
+                <span style={{ fontSize: '20px', fontWeight: 'bold', color: '#2962FF' }}>
+                  ${parseFloat(currentPrice.price).toFixed(2)}
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+      <div ref={chartContainerRef} style={{ width: '100%', height: 'calc(100% - 60px)' }} />
+    </div>
+  )
+}
