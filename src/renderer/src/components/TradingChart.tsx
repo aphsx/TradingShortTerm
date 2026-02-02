@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { createChart, IChartApi, Time, CandlestickData, ISeriesApi } from 'lightweight-charts'
+import { createChart, IChartApi, Time, CandlestickData, ISeriesApi, CandlestickSeriesPartialOptions } from 'lightweight-charts'
 import { useTradingStore } from '../store/trading'
 import { apiService, KlineData } from '../services/api'
 import { Card } from './ui/card'
@@ -87,13 +87,15 @@ export function TradingChart() {
         return
       }
 
-      const candlestickSeries = chart.addSeries('candlestick', {
+      const candlestickSeriesOptions: CandlestickSeriesPartialOptions = {
         upColor: '#16a34a',
         downColor: '#dc2626',
         borderVisible: false,
         wickUpColor: '#16a34a',
         wickDownColor: '#dc2626'
-      })
+      }
+
+      const candlestickSeries = chart.addSeries('Candlestick', candlestickSeriesOptions)
 
       console.log('✅ Chart and candlestick series created successfully')
 
