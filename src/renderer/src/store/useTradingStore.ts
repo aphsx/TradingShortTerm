@@ -26,10 +26,13 @@ interface TradingState {
   interval: string
   candles: Map<number, CandlestickData>
   ticker: TickerData | null
+  currentPrice: number // Real-time price from trades
   
   // WebSocket
   ws: WebSocket | null
+  priceWs: WebSocket | null // Separate WebSocket for real-time prices
   isConnected: boolean
+  isPriceConnected: boolean
   
   // Loading states
   isLoadingHistory: boolean
@@ -39,8 +42,10 @@ interface TradingState {
   setInterval: (interval: string) => void
   loadHistoricalData: () => Promise<void>
   connectWebSocket: () => void
+  connectPriceWebSocket: () => void
   disconnectWebSocket: () => void
   updateCandle: (data: any) => void
+  updatePrice: (data: any) => void
   getCandleArray: () => CandlestickData[]
 }
 
@@ -50,8 +55,11 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   interval: '1m',
   candles: new Map(),
   ticker: null,
+  currentPrice: 0,
   ws: null,
+  priceWs: null,
   isConnected: false,
+  isPriceConnected: false,
   isLoadingHistory: false,
 
   setSymbol: (symbol: string) => {
@@ -62,6 +70,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     state.disconnectWebSocket()
     get().loadHistoricalData()
     get().connectWebSocket()
+    get().connectPriceWebSocket()
   },
 
   setInterval: (interval: string) => {
@@ -151,11 +160,55 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     set({ ws: newWs })
   },
 
+  connectPriceWebSocket: () => {
+    const { symbol, priceWs } = get()
+    
+    if (priceWs?.readyState === WebSocket.OPEN) {
+      console.log('⚠️ Price WebSocket already connected')
+      return
+    }
+
+    const wsUrl = `ws://localhost:8080/api/price?symbol=${symbol}`
+    console.log('🔌 Connecting to Price WebSocket:', wsUrl)
+    
+    const newPriceWs = new WebSocket(wsUrl)
+
+    newPriceWs.onopen = () => {
+      console.log('✅ Price WebSocket connected')
+      set({ isPriceConnected: true })
+    }
+
+    newPriceWs.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        get().updatePrice(data)
+      } catch (error) {
+        console.error('❌ Price WebSocket message error:', error)
+      }
+    }
+
+    newPriceWs.onerror = (error) => {
+      console.error('❌ Price WebSocket error:', error)
+      set({ isPriceConnected: false })
+    }
+
+    newPriceWs.onclose = () => {
+      console.log('🔌 Price WebSocket disconnected')
+      set({ isPriceConnected: false, priceWs: null })
+    }
+
+    set({ priceWs: newPriceWs })
+  },
+
   disconnectWebSocket: () => {
-    const { ws } = get()
+    const { ws, priceWs } = get()
     if (ws) {
       ws.close()
       set({ ws: null, isConnected: false })
+    }
+    if (priceWs) {
+      priceWs.close()
+      set({ priceWs: null, isPriceConnected: false })
     }
   },
 
@@ -172,7 +225,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
       volume: data.volume
     })
 
-    // Update ticker
+    // Update ticker with candle close price
     set({
       candles,
       ticker: {
@@ -184,6 +237,17 @@ export const useTradingStore = create<TradingState>((set, get) => ({
         low24h: data.low,
         volume24h: data.volume
       }
+    })
+  },
+
+  updatePrice: (data: any) => {
+    const price = parseFloat(data.data?.price || data.price)
+    set({ 
+      currentPrice: price,
+      ticker: get().ticker ? {
+        ...get().ticker!,
+        price: price
+      } : null
     })
   },
 

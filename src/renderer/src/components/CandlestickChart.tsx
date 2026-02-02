@@ -28,7 +28,7 @@ export default function CandlestickChart() {
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
 
-  const { candles, isLoadingHistory, getCandleArray, symbol, interval } = useTradingStore()
+  const { candles, isLoadingHistory, getCandleArray, symbol, interval, currentPrice } = useTradingStore()
   const [isChartReady, setIsChartReady] = useState(false)
   const [chartType, setChartType] = useState<'candlestick' | 'line' | 'area'>('candlestick')
   const [lastPrice, setLastPrice] = useState<number>(0)
@@ -172,6 +172,22 @@ export default function CandlestickChart() {
       console.error('Error creating chart:', error)
     }
   }, [])
+
+  // Update price display with real-time price
+  useEffect(() => {
+    if (currentPrice > 0) {
+      setLastPrice(currentPrice)
+      
+      const candleArray = getCandleArray()
+      if (candleArray.length > 0) {
+        const firstCandle = candleArray[0]
+        const change = currentPrice - firstCandle.open
+        const changePercent = ((change / firstCandle.open) * 100)
+        setPriceChange(change)
+        setPriceChangePercent(changePercent)
+      }
+    }
+  }, [currentPrice, getCandleArray])
 
   // Update chart data
   useEffect(() => {

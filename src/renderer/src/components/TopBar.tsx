@@ -20,7 +20,7 @@ const TIMEFRAMES = [
 ]
 
 export default function TopBar() {
-  const { symbol, ticker, interval, setInterval } = useTradingStore()
+  const { symbol, ticker, interval, setInterval, currentPrice } = useTradingStore()
 
   return (
     <div className="h-12 bg-[#1E222D] border-b border-[#2B2B43] flex items-center px-3 justify-between">
@@ -63,19 +63,19 @@ export default function TopBar() {
       </div>
 
       {/* Center: Market Stats */}
-      {ticker && (
+      {(ticker || currentPrice > 0) && (
         <div className="flex items-center gap-6">
           <div className="flex items-baseline gap-2">
             <span className="text-white font-semibold text-base">
-              {formatPrice(ticker.price)}
+              {formatPrice(currentPrice > 0 ? currentPrice : ticker?.price || 0)}
             </span>
             <span
               className={`text-xs font-medium flex items-center gap-1 ${
-                ticker.priceChangePercent >= 0 ? 'text-[#26a69a]' : 'text-[#ef5350]'
+                (ticker?.priceChangePercent || 0) >= 0 ? 'text-[#26a69a]' : 'text-[#ef5350]'
               }`}
             >
-              {ticker.priceChangePercent >= 0 ? '+' : ''}
-              {formatPercent(ticker.priceChangePercent)}
+              {(ticker?.priceChangePercent || 0) >= 0 ? '+' : ''}
+              {formatPercent(ticker?.priceChangePercent || 0)}
             </span>
           </div>
 
@@ -83,18 +83,18 @@ export default function TopBar() {
 
           <div className="flex flex-col">
             <span className="text-[10px] text-gray-500">24h High</span>
-            <span className="text-xs text-white">{formatPrice(ticker.high24h)}</span>
+            <span className="text-xs text-white">{formatPrice(ticker?.high24h || 0)}</span>
           </div>
 
           <div className="flex flex-col">
             <span className="text-[10px] text-gray-500">24h Low</span>
-            <span className="text-xs text-white">{formatPrice(ticker.low24h)}</span>
+            <span className="text-xs text-white">{formatPrice(ticker?.low24h || 0)}</span>
           </div>
 
           <div className="flex flex-col">
             <span className="text-[10px] text-gray-500">24h Volume</span>
             <span className="text-xs text-white">
-              {ticker.volume24h.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              {(ticker?.volume24h || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
             </span>
           </div>
         </div>

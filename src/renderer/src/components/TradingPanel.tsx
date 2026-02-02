@@ -6,7 +6,7 @@ type OrderType = 'limit' | 'market'
 type OrderSide = 'buy' | 'sell'
 
 export default function TradingPanel() {
-  const { symbol, ticker } = useTradingStore()
+  const { symbol, ticker, currentPrice } = useTradingStore()
   const [orderType, setOrderType] = useState<OrderType>('limit')
   const [orderSide, setOrderSide] = useState<OrderSide>('buy')
   const [price, setPrice] = useState('')
@@ -109,7 +109,7 @@ export default function TradingPanel() {
                 type="number"
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
-                placeholder={ticker?.price.toFixed(2) || '0.00'}
+                placeholder={currentPrice > 0 ? currentPrice.toFixed(2) : (ticker?.price.toFixed(2) || '0.00')}
                 className="w-full bg-[#131722] text-white text-sm px-3 py-2 rounded 
                          border border-[#2B2B43] focus:outline-none focus:border-[#2962FF]"
               />

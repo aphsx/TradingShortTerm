@@ -7,10 +7,11 @@ import BottomPanel from './BottomPanel'
 import { useTradingStore } from '../store/useTradingStore'
 
 export default function TradingViewLayout() {
-  const { connectWebSocket, disconnectWebSocket } = useTradingStore()
+  const { connectWebSocket, connectPriceWebSocket, disconnectWebSocket } = useTradingStore()
 
   useEffect(() => {
     connectWebSocket()
+    connectPriceWebSocket()
 
     return () => {
       disconnectWebSocket()
