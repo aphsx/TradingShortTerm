@@ -13,80 +13,109 @@ export default function CandlestickChart() {
 
   // Initialize chart
   useEffect(() => {
-    if (!chartContainerRef.current) return
-
-    const chart = createChart(chartContainerRef.current, {
-      layout: {
-        background: { type: ColorType.Solid, color: '#131722' },
-        textColor: '#d1d4dc'
-      },
-      grid: {
-        vertLines: { color: '#1e222d' },
-        horzLines: { color: '#1e222d' }
-      },
-      width: chartContainerRef.current.clientWidth,
-      height: chartContainerRef.current.clientHeight,
-      rightPriceScale: {
-        borderColor: '#2b2b43'
-      },
-      timeScale: {
-        borderColor: '#2b2b43',
-        timeVisible: true,
-        secondsVisible: false
-      },
-      crosshair: {
-        mode: 1
-      }
-    })
-
-    // Candlestick series
-    const candleSeries = chart.addSeries({
-      type: 'Candlestick',
-      upColor: '#089981',
-      downColor: '#f23645',
-      borderUpColor: '#089981',
-      borderDownColor: '#f23645',
-      wickUpColor: '#089981',
-      wickDownColor: '#f23645'
-    })
-
-    // Volume series
-    const volumeSeries = chart.addSeries({
-      type: 'Histogram',
-      color: '#26a69a',
-      priceFormat: {
-        type: 'volume'
-      },
-      priceScaleId: ''
-    })
-    volumeSeries.priceScale().applyOptions({
-      scaleMargins: {
-        top: 0.8,
-        bottom: 0
-      }
-    })
-
-    chartRef.current = chart
-    candleSeriesRef.current = candleSeries
-    volumeSeriesRef.current = volumeSeries
-    setIsChartReady(true)
-
-    // Handle resize
-    const handleResize = () => {
-      if (chartContainerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-          height: chartContainerRef.current.clientHeight
-        })
-      }
+    if (!chartContainerRef.current) {
+      console.error('❌ Chart container ref is null')
+      return
     }
 
-    const resizeObserver = new ResizeObserver(handleResize)
-    resizeObserver.observe(chartContainerRef.current)
+    const container = chartContainerRef.current
+    const width = container.clientWidth
+    const height = container.clientHeight
 
-    return () => {
-      resizeObserver.disconnect()
-      chart.remove()
+    console.log('📊 Initializing chart with dimensions:', { width, height })
+
+    if (width === 0 || height === 0) {
+      console.warn('⚠️ Container has zero dimensions, setting defaults')
+    }
+
+    try {
+      const chart = createChart(container, {
+        layout: {
+          background: { type: ColorType.Solid, color: '#131722' },
+          textColor: '#d1d4dc'
+        },
+        grid: {
+          vertLines: { color: '#1e222d' },
+          horzLines: { color: '#1e222d' }
+        },
+        width: width || 800,
+        height: height || 600,
+        rightPriceScale: {
+          borderColor: '#2b2b43'
+        },
+        timeScale: {
+          borderColor: '#2b2b43',
+          timeVisible: true,
+          secondsVisible: false
+        },
+        crosshair: {
+          mode: 1 as any
+        }
+      })
+
+      console.log('✅ Chart instance created')
+
+      // Candlestick series
+      const candleSeries = chart.addSeries({ type: 'Candlestick' } as any)
+      candleSeries.applyOptions({
+        upColor: '#089981',
+        downColor: '#f23645',
+        borderUpColor: '#089981',
+        borderDownColor: '#f23645',
+        wickUpColor: '#089981',
+        wickDownColor: '#f23645'
+      } as any)
+
+      // Volume series
+      const volumeSeries = chart.addSeries({ type: 'Histogram' } as any)
+      volumeSeries.applyOptions({
+        color: '#26a69a',
+        priceFormat: {
+          type: 'volume'
+        },
+        priceScaleId: ''
+      } as any)
+      volumeSeries.priceScale().applyOptions({
+        scaleMargins: {
+          top: 0.8,
+          bottom: 0
+        }
+      })
+
+      chartRef.current = chart
+      candleSeriesRef.current = candleSeries
+      volumeSeriesRef.current = volumeSeries
+      setIsChartReady(true)
+
+      console.log('✅ Series created and chart ready')
+
+      // Handle resize
+      const handleResize = () => {
+        if (chartContainerRef.current && chartRef.current) {
+          const newWidth = chartContainerRef.current.clientWidth
+          const newHeight = chartContainerRef.current.clientHeight
+          if (newWidth > 0 && newHeight > 0) {
+            chartRef.current.applyOptions({
+              width: newWidth,
+              height: newHeight
+            })
+          }
+        }
+      }
+
+      const resizeObserver = new ResizeObserver(handleResize)
+      resizeObserver.observe(chartContainerRef.current)
+
+      return () => {
+        console.log('🧹 Cleaning up chart')
+        resizeObserver.disconnect()
+        if (chartRef.current) {
+          chartRef.current.remove()
+          chartRef.current = null
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error creating chart:', error)
     }
   }, [])
 
@@ -116,7 +145,7 @@ export default function CandlestickChart() {
   }, [candles, isChartReady, getCandleArray])
 
   return (
-    <div className="relative w-full h-full bg-[#131722]">
+    <div className="relative w-full h-full min-h-[400px] bg-[#131722]">
       {isLoadingHistory && (
         <div className="absolute inset-0 flex items-center justify-center bg-[#131722] z-10">
           <div className="text-center">
@@ -125,7 +154,7 @@ export default function CandlestickChart() {
           </div>
         </div>
       )}
-      <div ref={chartContainerRef} className="w-full h-full" />
+      <div ref={chartContainerRef} className="w-full h-full min-h-[400px]" />
     </div>
   )
 }
