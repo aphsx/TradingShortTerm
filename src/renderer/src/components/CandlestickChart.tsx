@@ -40,7 +40,8 @@ export default function CandlestickChart() {
     })
 
     // Candlestick series
-    const candleSeries = (chart as any).addCandlestickSeries({
+    const candleSeries = chart.addSeries({
+      type: 'Candlestick',
       upColor: '#089981',
       downColor: '#f23645',
       borderUpColor: '#089981',
@@ -50,7 +51,8 @@ export default function CandlestickChart() {
     })
 
     // Volume series
-    const volumeSeries = (chart as any).addHistogramSeries({
+    const volumeSeries = chart.addSeries({
+      type: 'Histogram',
       color: '#26a69a',
       priceFormat: {
         type: 'volume'

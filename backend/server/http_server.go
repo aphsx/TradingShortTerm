@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -86,11 +87,35 @@ func (s *Server) setupRoutes() {
 			c.JSON(http.StatusOK, gin.H{"status": "ok"})
 		})
 		api.GET("/price", s.handlePriceWebSocket)
-		api.GET("/kline", s.handleKlineWebSocket)
+		api.GET("/kline", s.handleKline)
 		api.GET("/balance", s.handleGetBalance)
 		api.POST("/order", s.handlePlaceOrder)
-		api.GET("/klines", s.handleGetKlines)
 	}
+}
+
+// handleKline handles both REST API (historical data) and WebSocket (real-time streaming)
+func (s *Server) handleKline(c *gin.Context) {
+	// Check if it's a WebSocket upgrade request
+	if c.Request.Header.Get("Upgrade") == "websocket" {
+		s.handleKlineWebSocket(c)
+		return
+	}
+
+	// Otherwise, handle as REST API for historical data
+	symbol := c.DefaultQuery("symbol", "BTCUSDT")
+	interval := c.DefaultQuery("interval", "1m")
+	limit := c.DefaultQuery("limit", "100")
+
+	klines, err := s.tradingClient.GetKlines(symbol, interval, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   err.Error(),
+			"message": "Failed to fetch klines",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, klines)
 }
 
 // HandlePriceWebSocket upgrades HTTP to WebSocket for price streaming
@@ -392,23 +417,6 @@ func (s *Server) handlePlaceOrder(c *gin.Context) {
 		"quantity": result.Quantity,
 		"price":    result.Price,
 	})
-}
-
-func (s *Server) handleGetKlines(c *gin.Context) {
-	symbol := c.DefaultQuery("symbol", "BTCUSDT")
-	interval := c.DefaultQuery("interval", "1m")
-	limit := c.DefaultQuery("limit", "100")
-
-	klines, err := s.tradingClient.GetKlines(symbol, interval, limit)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   err.Error(),
-			"message": "Failed to fetch klines",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, klines)
 }
 
 func (s *Server) Start(port string) error {

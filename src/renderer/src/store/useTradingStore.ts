@@ -80,7 +80,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
 
     try {
       const response = await fetch(
-        `http://localhost:8080/api/klines?symbol=${symbol}&interval=${interval}&limit=500`
+        `http://localhost:8080/api/kline?symbol=${symbol}&interval=${interval}&limit=500`
       )
       
       if (!response.ok) {
