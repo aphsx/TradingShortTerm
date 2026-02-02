@@ -19,7 +19,7 @@ const TIMEFRAMES = [
 export function TradingChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
-  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const seriesRef = useRef<any>(null)
   const hasSeriesCreated = useRef(false)
   
   const [timeframe, setTimeframe] = useState('1m')
@@ -87,7 +87,7 @@ export function TradingChart() {
         return
       }
 
-      const candlestickSeries = chart.addSeries({
+      const candlestickSeries = chart.addSeries('candlestick', {
         upColor: '#16a34a',
         downColor: '#dc2626',
         borderVisible: false,
@@ -128,7 +128,10 @@ export function TradingChart() {
 
   // Load klines data when timeframe changes
   useEffect(() => {
-    if (!seriesRef.current) return
+    if (!seriesRef.current || !hasSeriesCreated.current) {
+      console.log('⏸️ Series not ready yet')
+      return
+    }
 
     const loadKlines = async () => {
       try {
@@ -136,6 +139,7 @@ export function TradingChart() {
         console.log(`📊 Loading ${timeframe} klines...`)
         
         const klines = await apiService.getKlines('BTCUSDT', timeframe, 500)
+        console.log(`✅ Received ${klines.length} klines from API`)
         
         const candlestickData: CandlestickData[] = klines.map((k: KlineData) => ({
           time: Math.floor(k.openTime / 1000) as Time,
@@ -147,12 +151,15 @@ export function TradingChart() {
 
         if (candlestickData.length > 0) {
           seriesRef.current.setData(candlestickData)
-          console.log(`✅ Loaded ${candlestickData.length} candlesticks`)
+          console.log(`✅ Loaded ${candlestickData.length} candlesticks to chart`)
+        } else {
+          console.warn('⚠️ No candlestick data received')
         }
       } catch (error) {
         console.error('❌ Failed to load klines:', error)
       } finally {
         setIsLoading(false)
+        console.log('✅ Loading complete, isLoading set to false')
       }
     }
 
