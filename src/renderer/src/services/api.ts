@@ -39,6 +39,7 @@ class ApiService {
 
   async placeOrder(order: OrderRequest): Promise<OrderResponse> {
     try {
+      console.log('Placing order:', order)
       const response = await fetch(`${BASE_URL}/order`, {
         method: 'POST',
         headers: {
@@ -47,14 +48,18 @@ class ApiService {
         body: JSON.stringify(order)
       })
 
+      const data = await response.json()
+      
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        const errorMsg = data?.error || data?.message || `HTTP error! status: ${response.status}`
+        throw new Error(errorMsg)
       }
 
-      const data = await response.json()
+      console.log('Order placed successfully:', data)
       return data
     } catch (error) {
-      console.error('Failed to place order:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      console.error('Failed to place order:', errorMessage)
       throw error
     }
   }

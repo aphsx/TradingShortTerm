@@ -7,7 +7,7 @@ import { Label } from './ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
 import { Alert, AlertDescription } from './ui/alert'
 import { Badge } from './ui/badge'
-import { ArrowUpRight, ArrowDownLeft, AlertCircle, CheckCircle } from 'lucide-react'
+import { ArrowUpRight, ArrowDownLeft, AlertCircle, CheckCircle, AlertTriangle } from 'lucide-react'
 
 export function OrderPanel() {
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY')
@@ -42,13 +42,14 @@ export function OrderPanel() {
       const response = await apiService.placeOrder(order)
       setMessage({
         type: 'success',
-        text: `Order placed successfully! ${response.message || ''}`
+        text: `Order placed successfully! Order ID: ${response.orderId || 'N/A'}`
       })
       setQuantity('')
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
       setMessage({
         type: 'error',
-        text: `Failed to place order: ${error instanceof Error ? error.message : 'Unknown error'}`
+        text: `Failed to place order: ${errorMsg}`
       })
     } finally {
       setLoading(false)
@@ -187,6 +188,13 @@ export function OrderPanel() {
             </AlertDescription>
           </Alert>
         )}
+
+        <Alert className="border-amber-500/30 bg-amber-500/10">
+          <AlertTriangle className="h-4 w-4 text-amber-400" />
+          <AlertDescription className="text-amber-300 text-xs">
+            <strong>⚠️ Testnet Mode</strong> - Using test funds only. Ensure backend is running with valid Binance API credentials.
+          </AlertDescription>
+        </Alert>
       </CardContent>
     </Card>
   )
