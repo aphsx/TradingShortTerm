@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/adshao/go-binance/v2"
 	"github.com/aphis/24hrt-backend/config"
@@ -319,5 +320,59 @@ func (tc *TradingClient) GetKlines(symbol, interval, limitStr string) ([]KlineDa
 	}
 
 	log.Printf("📊 Fetched %d klines for %s (%s)", len(result), symbol, interval)
+	return result, nil
+}
+
+// GetKlinesWithTimeRange fetches historical candlestick data with custom time range
+func (tc *TradingClient) GetKlinesWithTimeRange(symbol, interval, startTime, endTime, limitStr string) ([]KlineData, error) {
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		limit = 500
+	}
+
+	// Parse start and end times
+	start, err := strconv.ParseInt(startTime, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid start time: %w", err)
+	}
+
+	end, err := strconv.ParseInt(endTime, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid end time: %w", err)
+	}
+
+	klines, err := tc.client.NewKlinesService().
+		Symbol(symbol).
+		Interval(interval).
+		StartTime(start).
+		EndTime(end).
+		Limit(limit).
+		Do(context.Background())
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get klines with time range: %w", err)
+	}
+
+	result := make([]KlineData, len(klines))
+	for i, k := range klines {
+		result[i] = KlineData{
+			OpenTime:                 k.OpenTime,
+			Open:                     k.Open,
+			High:                     k.High,
+			Low:                      k.Low,
+			Close:                    k.Close,
+			Volume:                   k.Volume,
+			CloseTime:                k.CloseTime,
+			QuoteAssetVolume:         k.QuoteAssetVolume,
+			NumberOfTrades:           int(k.TradeNum),
+			TakerBuyBaseAssetVolume:  k.TakerBuyBaseAssetVolume,
+			TakerBuyQuoteAssetVolume: k.TakerBuyQuoteAssetVolume,
+		}
+	}
+
+	log.Printf("📊 Fetched %d klines for %s (%s) from %s to %s", 
+		len(result), symbol, interval, 
+		time.Unix(start/1000, 0).Format("2006-01-02 15:04:05"),
+		time.Unix(end/1000, 0).Format("2006-01-02 15:04:05"))
 	return result, nil
 }

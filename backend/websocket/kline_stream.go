@@ -33,21 +33,23 @@ type KlineStreamer struct {
 	errC         chan error
 	buffer       *DataBuffer // Add buffering capability
 	mu           sync.Mutex  // Add mutex for thread safety
+	compression  bool        // Enable data compression for better performance
 }
 
 // NewKlineStreamer creates a new kline streamer for a given symbol and interval
 func NewKlineStreamer(symbol, interval string) *KlineStreamer {
 	return &KlineStreamer{
-		symbol:     symbol,
-		interval:   interval,
-		updateChan: make(chan KlineUpdate, 100),
-		errorChan:  make(chan error, 10),
-		stopChan:   make(chan struct{}),
-		doneC:      make(chan struct{}),
-		stopC:      make(chan struct{}),
-		errC:       make(chan error),
-		isRunning:  false,
-		buffer:     NewDataBuffer(symbol, interval), // Initialize buffer
+		symbol:      symbol,
+		interval:    interval,
+		updateChan:  make(chan KlineUpdate, 100),
+		errorChan:   make(chan error, 10),
+		stopChan:    make(chan struct{}),
+		doneC:       make(chan struct{}),
+		stopC:       make(chan struct{}),
+		errC:        make(chan error),
+		isRunning:   false,
+		buffer:      NewDataBuffer(symbol, interval), // Initialize buffer
+		compression: true, // Enable compression by default
 	}
 }
 

@@ -94,12 +94,86 @@ func (s *Server) setupRoutes() {
 		})
 		api.GET("/price", s.handlePriceWebSocket)
 		api.GET("/kline", s.handleKline)
+		api.GET("/kline/history", s.handleKlineHistory) // New endpoint for historical data
+		api.GET("/symbols", s.handleGetSymbols)         // New endpoint for available symbols
+		api.GET("/intervals", s.handleGetIntervals)     // New endpoint for available intervals
 		api.GET("/balance", s.handleGetBalance)
 		api.POST("/order", s.handlePlaceOrder)
 	}
 }
 
-// handleKline handles both REST API (historical data) and WebSocket (real-time streaming)
+// handleKlineHistory handles historical data requests with custom date ranges
+func (s *Server) handleKlineHistory(c *gin.Context) {
+	symbol := c.DefaultQuery("symbol", "BTCUSDT")
+	interval := c.DefaultQuery("interval", "1m")
+	startTime := c.Query("startTime")
+	endTime := c.Query("endTime")
+	limit := c.DefaultQuery("limit", "500")
+
+	log.Printf("📊 Historical data request: %s %s (limit: %s)", symbol, interval, limit)
+
+	// If custom date range is provided
+	if startTime != "" && endTime != "" {
+		klines, err := s.tradingClient.GetKlinesWithTimeRange(symbol, interval, startTime, endTime, limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   err.Error(),
+				"message": "Failed to fetch historical klines",
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"data":  klines,
+			"count": len(klines),
+			"range": fmt.Sprintf("%s - %s", startTime, endTime),
+		})
+		return
+	}
+
+	// Otherwise, use regular limit-based fetch
+	klines, err := s.tradingClient.GetKlines(symbol, interval, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   err.Error(),
+			"message": "Failed to fetch klines",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":  klines,
+		"count": len(klines),
+		"source": "api",
+	})
+}
+
+// handleGetSymbols returns available trading symbols
+func (s *Server) handleGetSymbols(c *gin.Context) {
+	symbols := []string{
+		"BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "SOLUSDT",
+		"XRPUSDT", "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "MATICUSDT",
+		"LINKUSDT", "UNIUSDT", "LTCUSDT", "ATOMUSDT", "FILUSDT",
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"symbols": symbols,
+		"count":   len(symbols),
+	})
+}
+
+// handleGetIntervals returns available time intervals
+func (s *Server) handleGetIntervals(c *gin.Context) {
+	intervals := []string{
+		"1m", "3m", "5m", "15m", "30m",
+		"1h", "2h", "4h", "6h", "8h", "12h",
+		"1d", "3d", "1w", "1M",
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"intervals": intervals,
+		"count":     len(intervals),
+	})
+}
 func (s *Server) handleKline(c *gin.Context) {
 	// Check if it's a WebSocket upgrade request
 	if c.Request.Header.Get("Upgrade") == "websocket" {

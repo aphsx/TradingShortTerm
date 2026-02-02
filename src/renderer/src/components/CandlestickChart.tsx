@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { 
   createChart, 
   ColorType, 
@@ -8,7 +8,10 @@ import {
   CandlestickData as LWCCandlestickData,
   Time,
   CandlestickSeries,
-  HistogramSeries
+  HistogramSeries,
+  LineSeries,
+  AreaSeries,
+  MouseEventParams
 } from 'lightweight-charts'
 import { useTradingStore } from '../store/useTradingStore'
 import { 
@@ -19,7 +22,11 @@ import {
   ChevronRight,
   Plus,
   ZoomIn,
-  ZoomOut
+  ZoomOut,
+  BarChart3,
+  LineChart as LineChartIcon,
+  AreaChart as AreaChartIcon,
+  HelpCircle
 } from 'lucide-react'
 import CountdownTimer from './CountdownTimer'
 
@@ -35,6 +42,10 @@ export default function CandlestickChart() {
   const [lastPrice, setLastPrice] = useState<number>(0)
   const [priceChange, setPriceChange] = useState<number>(0)
   const [priceChangePercent, setPriceChangePercent] = useState<number>(0)
+  const [selectedRange, setSelectedRange] = useState<'1D' | '1W' | '1M' | '1Y' | 'ALL'>('ALL')
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; content: string } | null>(null)
+  const [mainSeries, setMainSeries] = useState<ISeriesApi<'Candlestick'> | ISeriesApi<'Line'> | ISeriesApi<'Area'> | null>(null)
+  const [userInteracted, setUserInteracted] = useState(false) // Track if user manually zoomed/panned
 
   // Initialize chart with TradingView styling
   useEffect(() => {
@@ -113,14 +124,39 @@ export default function CandlestickChart() {
         }
       })
 
-      // Candlestick series
-      const candleSeries = chart.addSeries(CandlestickSeries, {
-        upColor: '#26a69a',
-        downColor: '#ef5350',
-        borderVisible: false,
-        wickUpColor: '#26a69a',
-        wickDownColor: '#ef5350'
-      })
+      // Create main series based on chart type
+      let mainSeries: ISeriesApi<'Candlestick'> | ISeriesApi<'Line'> | ISeriesApi<'Area'>
+      
+      switch (chartType) {
+        case 'line':
+          mainSeries = chart.addSeries(LineSeries, {
+            color: '#2196F3',
+            lineWidth: 2,
+            title: symbol
+          })
+          break
+        case 'area':
+          mainSeries = chart.addSeries(AreaSeries, {
+            topColor: 'rgba(33, 150, 243, 0.56)',
+            bottomColor: 'rgba(33, 150, 243, 0.04)',
+            lineColor: '#2196F3',
+            lineWidth: 2,
+            title: symbol
+          })
+          break
+        default:
+          mainSeries = chart.addSeries(CandlestickSeries, {
+            upColor: '#26a69a',
+            downColor: '#ef5350',
+            borderVisible: false,
+            wickUpColor: '#26a69a',
+            wickDownColor: '#ef5350',
+            title: symbol
+          })
+          candleSeriesRef.current = mainSeries as ISeriesApi<'Candlestick'>
+      }
+      
+      setMainSeries(mainSeries)
 
       // Volume series
       const volumeSeries = chart.addSeries(HistogramSeries, {
@@ -141,7 +177,7 @@ export default function CandlestickChart() {
       })
 
       chartRef.current = chart
-      candleSeriesRef.current = candleSeries
+      candleSeriesRef.current = mainSeries as ISeriesApi<'Candlestick'>
       volumeSeriesRef.current = volumeSeries
       setIsChartReady(true)
 
@@ -174,7 +210,110 @@ export default function CandlestickChart() {
     }
   }, [])
 
-  // Update price display with real-time price
+  // Filter data based on selected time range
+  const filterDataByRange = useCallback((data: any[]) => {
+    if (!data.length) return data
+    
+    const now = Date.now()
+    const oneDay = 24 * 60 * 60 * 1000
+    const oneWeek = 7 * oneDay
+    const oneMonth = 30 * oneDay
+    const oneYear = 365 * oneDay
+    
+    let cutoffTime = 0
+    
+    switch (selectedRange) {
+      case '1D':
+        cutoffTime = now - oneDay
+        break
+      case '1W':
+        cutoffTime = now - oneWeek
+        break
+      case '1M':
+        cutoffTime = now - oneMonth
+        break
+      case '1Y':
+        cutoffTime = now - oneYear
+        break
+      default:
+        return data // ALL
+    }
+    
+    return data.filter(item => {
+      const itemTime = typeof item.time === 'number' ? item.time * 1000 : new Date(item.time).getTime()
+      return itemTime >= cutoffTime
+    })
+  }, [selectedRange])
+
+  // Handle crosshair move for tooltip
+  const handleCrosshairMove = useCallback((param: MouseEventParams<Time>) => {
+    if (!param.point || !mainSeries || !param.time) {
+      setTooltip(null)
+      return
+    }
+    
+    const data = param.seriesData.get(mainSeries)
+    if (!data) {
+      setTooltip(null)
+      return
+    }
+    
+    let content = ''
+    const time = new Date(typeof param.time === 'number' ? param.time * 1000 : param.time as string)
+    const timeStr = time.toLocaleString()
+    
+    if ('open' in data && 'high' in data && 'low' in data && 'close' in data) {
+      // Candlestick data
+      const candleData = data as LWCCandlestickData
+      content = `
+        <div class="bg-[#1e222d] border border-[#2b2b43] rounded p-2 text-xs">
+          <div class="text-gray-400 mb-1">${timeStr}</div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><span class="text-gray-500">O:</span> <span class="text-white">${candleData.open.toFixed(2)}</span></div>
+            <div><span class="text-gray-500">H:</span> <span class="text-white">${candleData.high.toFixed(2)}</span></div>
+            <div><span class="text-gray-500">L:</span> <span class="text-white">${candleData.low.toFixed(2)}</span></div>
+            <div><span class="text-gray-500">C:</span> <span class="text-white">${candleData.close.toFixed(2)}</span></div>
+          </div>
+        </div>
+      `
+    } else if ('value' in data) {
+      // Line/Area data
+      const valueData = data as { value: number }
+      content = `
+        <div class="bg-[#1e222d] border border-[#2b2b43] rounded p-2 text-xs">
+          <div class="text-gray-400 mb-1">${timeStr}</div>
+          <div><span class="text-gray-500">Price:</span> <span class="text-white">${valueData.value.toFixed(2)}</span></div>
+        </div>
+      `
+    }
+    
+    setTooltip({
+      x: param.point.x,
+      y: param.point.y,
+      content
+    })
+  }, [mainSeries])
+
+      // Subscribe to crosshair events
+      useEffect(() => {
+        if (!chartRef.current || !isChartReady) return
+        
+        const chart = chartRef.current
+        chart.subscribeCrosshairMove(handleCrosshairMove)
+        
+        // Track when user manually scrolls or zooms
+        const handleTimeScaleChange = () => {
+          setUserInteracted(true)
+        }
+        
+        // These events indicate user interaction
+        chart.subscribeClick(handleTimeScaleChange)
+        
+        return () => {
+          chart.unsubscribeCrosshairMove(handleCrosshairMove)
+          // Note: There's no direct unsubscribe for click in Lightweight Charts
+        }
+      }, [chartRef, isChartReady, handleCrosshairMove])
   useEffect(() => {
     if (currentPrice > 0) {
       setLastPrice(currentPrice)
@@ -192,50 +331,78 @@ export default function CandlestickChart() {
 
   // Update chart data
   useEffect(() => {
-    if (!isChartReady || !candleSeriesRef.current || !volumeSeriesRef.current) return
+    if (!isChartReady || !mainSeries || !volumeSeriesRef.current) return
 
     const candleArray = getCandleArray()
     if (candleArray.length === 0) return
 
     try {
-      const candleData: LWCCandlestickData[] = candleArray.map((c) => ({
-        time: c.time,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close
-      }))
+      // Filter data based on selected range
+      const filteredData = filterDataByRange(candleArray)
+      
+      // Prepare data based on chart type
+      let chartData: any[] = []
+      
+      switch (chartType) {
+        case 'line':
+          chartData = filteredData.map((c) => ({
+            time: c.time,
+            value: c.close
+          }))
+          break
+        case 'area':
+          chartData = filteredData.map((c) => ({
+            time: c.time,
+            value: c.close
+          }))
+          break
+        default:
+          chartData = filteredData.map((c) => ({
+            time: c.time,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close
+          }))
+      }
 
-      const volumeData = candleArray.map((c) => ({
+      const volumeData = filteredData.map((c) => ({
         time: c.time,
         value: c.volume,
         color: c.close >= c.open ? '#26a69a80' : '#ef535080'
       }))
 
-      candleSeriesRef.current.setData(candleData)
+      mainSeries.setData(chartData)
       volumeSeriesRef.current.setData(volumeData)
 
       // Update price info
-      if (candleData.length > 0) {
-        const lastCandle = candleData[candleData.length - 1]
-        const firstCandle = candleData[0]
-        setLastPrice(lastCandle.close)
-        const change = lastCandle.close - firstCandle.open
-        const changePercent = ((change / firstCandle.open) * 100)
+      if (chartData.length > 0) {
+        const lastItem = chartData[chartData.length - 1]
+        const firstItem = chartData[0]
+        const lastPrice = 'close' in lastItem ? lastItem.close : lastItem.value
+        const firstPrice = 'open' in firstItem ? firstItem.open : firstItem.value
+        
+        setLastPrice(lastPrice)
+        const change = lastPrice - firstPrice
+        const changePercent = ((change / firstPrice) * 100)
         setPriceChange(change)
         setPriceChangePercent(changePercent)
       }
 
       if (chartRef.current) {
-        chartRef.current.timeScale().fitContent()
+        // Only fit content if user hasn't manually interacted (zoomed/panned)
+        if (!userInteracted) {
+          chartRef.current.timeScale().fitContent()
+        }
       }
     } catch (error) {
       console.error('Error updating chart:', error)
     }
-  }, [candles, isChartReady, getCandleArray])
+  }, [candles, isChartReady, getCandleArray, chartType, filterDataByRange, mainSeries])
 
   const handleZoomIn = () => {
     if (chartRef.current) {
+      setUserInteracted(true) // Mark that user interacted
       const timeScale = chartRef.current.timeScale()
       const scrollPosition = timeScale.scrollPosition()
       timeScale.applyOptions({
@@ -246,6 +413,7 @@ export default function CandlestickChart() {
 
   const handleZoomOut = () => {
     if (chartRef.current) {
+      setUserInteracted(true) // Mark that user interacted
       const timeScale = chartRef.current.timeScale()
       timeScale.applyOptions({
         barSpacing: Math.max(timeScale.options().barSpacing * 0.8, 1)
@@ -255,6 +423,7 @@ export default function CandlestickChart() {
 
   const handleScrollLeft = () => {
     if (chartRef.current) {
+      setUserInteracted(true) // Mark that user interacted
       const timeScale = chartRef.current.timeScale()
       const position = timeScale.scrollPosition()
       timeScale.scrollToPosition(position - 10, false)
@@ -263,6 +432,7 @@ export default function CandlestickChart() {
 
   const handleScrollRight = () => {
     if (chartRef.current) {
+      setUserInteracted(true) // Mark that user interacted
       const timeScale = chartRef.current.timeScale()
       const position = timeScale.scrollPosition()
       timeScale.scrollToPosition(position + 10, false)
@@ -271,8 +441,67 @@ export default function CandlestickChart() {
 
   const handleFitContent = () => {
     if (chartRef.current) {
+      setUserInteracted(false) // Reset user interaction when fitting content
       chartRef.current.timeScale().fitContent()
     }
+  }
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!chartRef.current) return
+      
+      switch (e.key) {
+        case 'ArrowLeft':
+          handleScrollLeft()
+          break
+        case 'ArrowRight':
+          handleScrollRight()
+          break
+        case '+':
+        case '=':
+          handleZoomIn()
+          break
+        case '-':
+        case '_':
+          handleZoomOut()
+          break
+        case 'r':
+        case 'R':
+          handleFitContent()
+          break
+        case '1':
+          setSelectedRange('1D')
+          break
+        case '2':
+          setSelectedRange('1W')
+          break
+        case '3':
+          setSelectedRange('1M')
+          break
+        case '4':
+          setSelectedRange('1Y')
+          break
+        case '0':
+          setSelectedRange('ALL')
+          break
+      }
+    }
+    
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  // Handle chart type change
+  const handleChartTypeChange = (type: 'candlestick' | 'line' | 'area') => {
+    setUserInteracted(false) // Reset when changing chart type
+    setChartType(type)
+  }
+
+  // Handle range change
+  const handleRangeChange = (range: '1D' | '1W' | '1M' | '1Y' | 'ALL') => {
+    setUserInteracted(false) // Reset when changing range
+    setSelectedRange(range)
   }
 
   const getTrendIcon = () => {
@@ -316,6 +545,61 @@ export default function CandlestickChart() {
               </span>
             </div>
           </div>
+
+          {/* Time Range Selector */}
+          <div className="flex items-center gap-1 bg-[#1E222D] rounded p-1">
+            {(['1D', '1W', '1M', '1Y', 'ALL'] as const).map((range) => (
+              <button
+                key={range}
+                onClick={() => handleRangeChange(range)}
+                className={`px-3 py-1 text-sm rounded transition-colors ${
+                  selectedRange === range
+                    ? 'bg-[#2962FF] text-white'
+                    : 'text-gray-400 hover:text-white hover:bg-[#2B2B43]'
+                }`}
+                title={`Show ${range === 'ALL' ? 'all data' : range}`}
+              >
+                {range}
+              </button>
+            ))}
+          </div>
+
+          {/* Chart Type Selector */}
+          <div className="flex items-center gap-1 bg-[#1E222D] rounded p-1">
+            <button
+              onClick={() => handleChartTypeChange('candlestick')}
+              className={`p-1.5 rounded transition-colors ${
+                chartType === 'candlestick'
+                  ? 'bg-[#2962FF] text-white'
+                  : 'text-gray-400 hover:text-white hover:bg-[#2B2B43]'
+              }`}
+              title="Candlestick Chart"
+            >
+              <BarChart3 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => handleChartTypeChange('line')}
+              className={`p-1.5 rounded transition-colors ${
+                chartType === 'line'
+                  ? 'bg-[#2962FF] text-white'
+                  : 'text-gray-400 hover:text-white hover:bg-[#2B2B43]'
+              }`}
+              title="Line Chart"
+            >
+              <LineChartIcon className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => handleChartTypeChange('area')}
+              className={`p-1.5 rounded transition-colors ${
+                chartType === 'area'
+                  ? 'bg-[#2962FF] text-white'
+                  : 'text-gray-400 hover:text-white hover:bg-[#2B2B43]'
+              }`}
+              title="Area Chart"
+            >
+              <AreaChartIcon className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Chart Controls */}
@@ -323,38 +607,93 @@ export default function CandlestickChart() {
           <button
             onClick={handleScrollLeft}
             className="p-1.5 hover:bg-[#2B2B43] rounded transition-colors"
-            title="Scroll Left"
+            title="Scroll Left (←)"
           >
             <ChevronLeft className="w-4 h-4 text-gray-400" />
           </button>
           <button
             onClick={handleScrollRight}
             className="p-1.5 hover:bg-[#2B2B43] rounded transition-colors"
-            title="Scroll Right"
+            title="Scroll Right (→)"
           >
             <ChevronRight className="w-4 h-4 text-gray-400" />
           </button>
           <button
             onClick={handleZoomOut}
             className="p-1.5 hover:bg-[#2B2B43] rounded transition-colors"
-            title="Zoom Out"
+            title="Zoom Out (-)"
           >
             <ZoomOut className="w-4 h-4 text-gray-400" />
           </button>
           <button
             onClick={handleZoomIn}
             className="p-1.5 hover:bg-[#2B2B43] rounded transition-colors"
-            title="Zoom In"
+            title="Zoom In (+)"
           >
             <ZoomIn className="w-4 h-4 text-gray-400" />
           </button>
           <button
             onClick={handleFitContent}
             className="px-3 py-1.5 text-sm hover:bg-[#2B2B43] rounded transition-colors text-gray-400"
-            title="Fit Content"
+            title="Fit Content (R)"
           >
             Fit
           </button>
+          <div className="relative group">
+            <button
+              className="p-1.5 hover:bg-[#2B2B43] rounded transition-colors text-gray-400"
+              title="Keyboard Shortcuts"
+            >
+              <HelpCircle className="w-4 h-4" />
+            </button>
+            <div className="absolute right-0 top-full mt-2 w-64 bg-[#1E222D] border border-[#2B2B43] rounded p-3 text-xs opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-30">
+              <div className="text-gray-400 mb-2 font-semibold">Keyboard Shortcuts:</div>
+              <div className="space-y-1 text-gray-300">
+                <div className="flex justify-between">
+                  <span>Scroll Left</span>
+                  <kbd className="px-1 py-0.5 bg-[#2B2B43] rounded text-[10px]">←</kbd>
+                </div>
+                <div className="flex justify-between">
+                  <span>Scroll Right</span>
+                  <kbd className="px-1 py-0.5 bg-[#2B2B43] rounded text-[10px]">→</kbd>
+                </div>
+                <div className="flex justify-between">
+                  <span>Zoom In</span>
+                  <kbd className="px-1 py-0.5 bg-[#2B2B43] rounded text-[10px]">+</kbd>
+                </div>
+                <div className="flex justify-between">
+                  <span>Zoom Out</span>
+                  <kbd className="px-1 py-0.5 bg-[#2B2B43] rounded text-[10px]">-</kbd>
+                </div>
+                <div className="flex justify-between">
+                  <span>Fit Content</span>
+                  <kbd className="px-1 py-0.5 bg-[#2B2B43] rounded text-[10px]">R</kbd>
+                </div>
+                <div className="border-t border-[#2B2B43] pt-1 mt-1">
+                  <div className="flex justify-between">
+                    <span>1 Day</span>
+                    <kbd className="px-1 py-0.5 bg-[#2B2B43] rounded text-[10px]">1</kbd>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>1 Week</span>
+                    <kbd className="px-1 py-0.5 bg-[#2B2B43] rounded text-[10px]">2</kbd>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>1 Month</span>
+                    <kbd className="px-1 py-0.5 bg-[#2B2B43] rounded text-[10px]">3</kbd>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>1 Year</span>
+                    <kbd className="px-1 py-0.5 bg-[#2B2B43] rounded text-[10px]">4</kbd>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>All Time</span>
+                    <kbd className="px-1 py-0.5 bg-[#2B2B43] rounded text-[10px]">0</kbd>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -368,6 +707,20 @@ export default function CandlestickChart() {
             </div>
           </div>
         )}
+        
+        {/* Tooltip */}
+        {tooltip && (
+          <div
+            className="absolute z-20 pointer-events-none"
+            style={{
+              left: tooltip.x + 10,
+              top: tooltip.y - 40,
+              transform: 'translate(0, -100%)'
+            }}
+            dangerouslySetInnerHTML={{ __html: tooltip.content }}
+          />
+        )}
+        
         <div ref={chartContainerRef} className="w-full h-full" />
       </div>
 
