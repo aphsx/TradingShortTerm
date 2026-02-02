@@ -1,9 +1,9 @@
 import { useEffect } from 'react'
 import TopBar from './TopBar'
-import SymbolSelector from './SymbolSelector'
-import ChartToolbar from './ChartToolbar'
-import TradingChart from './TradingChart'
+import WatchlistPanel from './WatchlistPanel'
+import CandlestickChart from './CandlestickChart'
 import TradingPanel from './TradingPanel'
+import BottomPanel from './BottomPanel'
 import { useTradingStore } from '../store/useTradingStore'
 
 export default function TradingViewLayout() {
@@ -18,21 +18,24 @@ export default function TradingViewLayout() {
   }, [])
 
   return (
-    <div className="h-screen w-full flex flex-col bg-[#131722]">
+    <div className="h-screen w-full flex flex-col bg-[#131722] overflow-hidden">
       {/* Top Bar */}
       <TopBar />
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Symbol Selector */}
-        <SymbolSelector />
+        {/* Left: Watchlist */}
+        <WatchlistPanel />
 
         {/* Center: Chart Area */}
-        <div className="flex-1 flex flex-col">
-          <ChartToolbar />
-          <div className="flex-1">
-            <TradingChart />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Chart */}
+          <div className="flex-1 overflow-hidden">
+            <CandlestickChart />
           </div>
+
+          {/* Bottom Panel */}
+          <BottomPanel />
         </div>
 
         {/* Right: Trading Panel */}

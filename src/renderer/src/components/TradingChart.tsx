@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { createChart, ColorType, SeriesType, CrosshairMode } from 'lightweight-charts'
+import { createChart, ColorType, CandlestickSeries, CrosshairMode } from 'lightweight-charts'
 import { useTradingStore } from '../store/useTradingStore'
 
 export default function TradingChart() {
@@ -39,16 +39,15 @@ export default function TradingChart() {
         }
       })
 
-      // สร้าง Candlestick Series ด้วย v5 API
-      const candleSeries = chart.addSeries({
-        type: SeriesType.Candlestick,
+      // สร้าง Candlestick Series ตามเอกสาร
+      const candleSeries = chart.addSeries(CandlestickSeries, {
         upColor: '#089981',
         downColor: '#f23645',
         borderDownColor: '#f23645',
         borderUpColor: '#089981',
         wickDownColor: '#f23645',
         wickUpColor: '#089981'
-      } as any)
+      })
 
       chartRef.current = chart
       candleSeriesRef.current = candleSeries
@@ -99,7 +98,7 @@ export default function TradingChart() {
         const ws = new WebSocket(wsUrl)
 
         ws.onopen = () => {
-          console.log('✅ WebSocket connected')
+          console.log('✅ WebSocket connected for', symbol, interval)
         }
 
         ws.onmessage = (event) => {
@@ -126,8 +125,7 @@ export default function TradingChart() {
 
         ws.onclose = () => {
           console.log('🔌 WebSocket disconnected')
-          // Reconnect after 5 seconds
-          setTimeout(connectWebSocket, 5000)
+          wsRef.current = null
         }
 
         wsRef.current = ws

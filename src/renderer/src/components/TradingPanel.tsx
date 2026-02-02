@@ -1,27 +1,32 @@
 import { useState } from 'react'
 import { useTradingStore } from '../store/useTradingStore'
-import { Button } from './ui/button'
-import { Input } from './ui/input'
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
-import { cn } from '../lib/utils'
+import { ArrowUpDown, TrendingUp, TrendingDown } from 'lucide-react'
 
-type OrderSide = 'BUY' | 'SELL'
-type OrderType = 'MARKET' | 'LIMIT'
+type OrderType = 'limit' | 'market'
+type OrderSide = 'buy' | 'sell'
 
 export default function TradingPanel() {
   const { symbol, ticker } = useTradingStore()
-  const [side, setSide] = useState<OrderSide>('BUY')
-  const [orderType, setOrderType] = useState<OrderType>('LIMIT')
-  const [quantity, setQuantity] = useState('')
+  const [orderType, setOrderType] = useState<OrderType>('limit')
+  const [orderSide, setOrderSide] = useState<OrderSide>('buy')
   const [price, setPrice] = useState('')
+  const [amount, setAmount] = useState('')
+  const [total, setTotal] = useState('')
+
+  const handlePercentageClick = (percentage: number) => {
+    // Calculate amount based on percentage of available balance
+    const availableBalance = 10000 // Mock balance
+    const calculatedAmount = (availableBalance * percentage) / 100
+    setAmount(calculatedAmount.toFixed(4))
+  }
 
   const handlePlaceOrder = async () => {
     const order = {
       symbol,
-      side,
-      type: orderType,
-      quantity: parseFloat(quantity),
-      price: orderType === 'LIMIT' ? parseFloat(price) : undefined
+      side: orderSide.toUpperCase(),
+      type: orderType.toUpperCase(),
+      quantity: parseFloat(amount),
+      price: orderType === 'limit' ? parseFloat(price) : undefined
     }
 
     try {
@@ -40,126 +45,169 @@ export default function TradingPanel() {
       alert('Order placed successfully!')
 
       // Reset form
-      setQuantity('')
-      if (orderType === 'LIMIT') setPrice('')
+      setAmount('')
+      setPrice('')
+      setTotal('')
     } catch (error) {
       console.error('❌ Order failed:', error)
       alert('Failed to place order: ' + (error as Error).message)
     }
   }
 
-  const isBuy = side === 'BUY'
-  const currentPrice = ticker?.price || 0
-
   return (
-    <div className="w-80 bg-[#1e222d] border-l border-[#2b2b43] flex flex-col">
-      <Card className="m-4 bg-[#131722] border-[#2b2b43]">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg">Place Order</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Buy/Sell Toggle */}
-          <div className="flex space-x-2">
-            <Button
-              variant={isBuy ? 'success' : 'outline'}
-              className={cn('flex-1', isBuy && 'bg-green-600 hover:bg-green-700')}
-              onClick={() => setSide('BUY')}
-            >
-              Buy
-            </Button>
-            <Button
-              variant={!isBuy ? 'destructive' : 'outline'}
-              className="flex-1"
-              onClick={() => setSide('SELL')}
-            >
-              Sell
-            </Button>
-          </div>
+    <div className="w-80 bg-[#1E222D] border-l border-[#2B2B43] flex flex-col">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-[#2B2B43]">
+        <h3 className="text-white text-sm font-semibold flex items-center gap-2">
+          <ArrowUpDown className="w-4 h-4" />
+          Spot Trading
+        </h3>
+      </div>
 
-          {/* Order Type */}
-          <div className="flex space-x-2">
-            <Button
-              variant={orderType === 'LIMIT' ? 'default' : 'outline'}
-              className="flex-1"
-              size="sm"
-              onClick={() => setOrderType('LIMIT')}
-            >
-              Limit
-            </Button>
-            <Button
-              variant={orderType === 'MARKET' ? 'default' : 'outline'}
-              className="flex-1"
-              size="sm"
-              onClick={() => setOrderType('MARKET')}
-            >
-              Market
-            </Button>
-          </div>
+      {/* Order Type Toggle */}
+      <div className="px-4 py-3 border-b border-[#2B2B43]">
+        <div className="flex gap-2 bg-[#131722] rounded p-1">
+          <button
+            onClick={() => setOrderType('limit')}
+            className={`flex-1 py-1.5 text-xs font-medium rounded transition-colors ${
+              orderType === 'limit'
+                ? 'bg-[#2962FF] text-white'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            Limit
+          </button>
+          <button
+            onClick={() => setOrderType('market')}
+            className={`flex-1 py-1.5 text-xs font-medium rounded transition-colors ${
+              orderType === 'market'
+                ? 'bg-[#2962FF] text-white'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            Market
+          </button>
+        </div>
+      </div>
 
-          {/* Price Input (only for LIMIT) */}
-          {orderType === 'LIMIT' && (
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">Price</label>
-              <Input
+      {/* Balance */}
+      <div className="px-4 py-2 border-b border-[#2B2B43]">
+        <div className="flex justify-between text-xs">
+          <span className="text-gray-400">Available</span>
+          <span className="text-white font-medium">10,000.00 USDT</span>
+        </div>
+      </div>
+
+      {/* Order Form */}
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+        {/* Price Input */}
+        {orderType === 'limit' && (
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Price</label>
+            <div className="relative">
+              <input
                 type="number"
-                placeholder={currentPrice.toString()}
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
+                placeholder={ticker?.price.toFixed(2) || '0.00'}
+                className="w-full bg-[#131722] text-white text-sm px-3 py-2 rounded 
+                         border border-[#2B2B43] focus:outline-none focus:border-[#2962FF]"
               />
-            </div>
-          )}
-
-          {/* Quantity Input */}
-          <div>
-            <label className="text-xs text-gray-400 mb-1 block">Quantity</label>
-            <Input
-              type="number"
-              placeholder="0.00"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-            />
-          </div>
-
-          {/* Market Price Info */}
-          {orderType === 'MARKET' && currentPrice > 0 && (
-            <div className="text-xs text-gray-400">
-              Market Price: <span className="text-white">{currentPrice.toFixed(2)}</span>
-            </div>
-          )}
-
-          {/* Total */}
-          {quantity && (orderType === 'MARKET' || price) && (
-            <div className="text-sm">
-              <span className="text-gray-400">Total: </span>
-              <span className="text-white font-semibold">
-                {(
-                  parseFloat(quantity) *
-                  (orderType === 'MARKET' ? currentPrice : parseFloat(price) || 0)
-                ).toFixed(2)}{' '}
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
                 USDT
               </span>
             </div>
-          )}
-
-          {/* Place Order Button */}
-          <Button
-            className={cn('w-full', isBuy ? 'bg-green-600 hover:bg-green-700' : '')}
-            variant={isBuy ? 'success' : 'destructive'}
-            onClick={handlePlaceOrder}
-            disabled={!quantity || (orderType === 'LIMIT' && !price)}
-          >
-            {side} {symbol}
-          </Button>
-
-          {/* Balance Info (Mock) */}
-          <div className="pt-4 border-t border-[#2b2b43] text-xs space-y-1">
-            <div className="flex justify-between text-gray-400">
-              <span>Available:</span>
-              <span className="text-white">0.00 USDT</span>
-            </div>
           </div>
-        </CardContent>
-      </Card>
+        )}
+
+        {/* Amount Input */}
+        <div>
+          <label className="text-xs text-gray-400 mb-1 block">Amount</label>
+          <div className="relative">
+            <input
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0.00"
+              className="w-full bg-[#131722] text-white text-sm px-3 py-2 rounded 
+                       border border-[#2B2B43] focus:outline-none focus:border-[#2962FF]"
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
+              BTC
+            </span>
+          </div>
+        </div>
+
+        {/* Percentage Buttons */}
+        <div className="flex gap-2">
+          {[25, 50, 75, 100].map((percentage) => (
+            <button
+              key={percentage}
+              onClick={() => handlePercentageClick(percentage)}
+              className="flex-1 py-1.5 text-xs bg-[#131722] text-gray-400 rounded 
+                       hover:bg-[#2B2B43] hover:text-white transition-colors"
+            >
+              {percentage}%
+            </button>
+          ))}
+        </div>
+
+        {/* Total Input */}
+        <div>
+          <label className="text-xs text-gray-400 mb-1 block">Total</label>
+          <div className="relative">
+            <input
+              type="number"
+              value={total}
+              onChange={(e) => setTotal(e.target.value)}
+              placeholder="0.00"
+              className="w-full bg-[#131722] text-white text-sm px-3 py-2 rounded 
+                       border border-[#2B2B43] focus:outline-none focus:border-[#2962FF]"
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
+              USDT
+            </span>
+          </div>
+        </div>
+
+        {/* Buy/Sell Buttons */}
+        <div className="grid grid-cols-2 gap-2 pt-2">
+          <button
+            onClick={() => {
+              setOrderSide('buy')
+              handlePlaceOrder()
+            }}
+            className="flex items-center justify-center gap-2 py-2.5 bg-[#26a69a] 
+                     hover:bg-[#2ca89f] text-white font-semibold rounded transition-colors"
+          >
+            <TrendingUp className="w-4 h-4" />
+            Buy
+          </button>
+          <button
+            onClick={() => {
+              setOrderSide('sell')
+              handlePlaceOrder()
+            }}
+            className="flex items-center justify-center gap-2 py-2.5 bg-[#ef5350] 
+                     hover:bg-[#f15b59] text-white font-semibold rounded transition-colors"
+          >
+            <TrendingDown className="w-4 h-4" />
+            Sell
+          </button>
+        </div>
+
+        {/* Order Info */}
+        <div className="pt-3 border-t border-[#2B2B43] space-y-1">
+          <div className="flex justify-between text-xs">
+            <span className="text-gray-400">Max Buy</span>
+            <span className="text-white">0.2312 BTC</span>
+          </div>
+          <div className="flex justify-between text-xs">
+            <span className="text-gray-400">Trading Fee</span>
+            <span className="text-white">0.1%</span>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
