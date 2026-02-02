@@ -1,12 +1,9 @@
 
 import './assets/main.css'
+import TradingViewLayout from './components/TradingViewLayout'
 
 function App(): React.JSX.Element {
-  return (
-    <div className="App">
-      <h1>Hello, World!</h1>
-    </div>
-  )
+  return <TradingViewLayout />
 }
 
 export default App
