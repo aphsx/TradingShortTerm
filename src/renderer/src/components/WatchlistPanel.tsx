@@ -18,7 +18,24 @@ const POPULAR_SYMBOLS: MarketSymbol[] = [
   { symbol: 'XRPUSDT', name: 'Ripple', price: 0.6234, change: -0.0123, changePercent: -1.93 },
   { symbol: 'ADAUSDT', name: 'Cardano', price: 0.4567, change: 0.0234, changePercent: 5.40 },
   { symbol: 'DOGEUSDT', name: 'Dogecoin', price: 0.0823, change: 0.0045, changePercent: 5.78 },
-  { symbol: 'MATICUSDT', name: 'Polygon', price: 0.8945, change: -0.0321, changePercent: -3.46 }
+  { symbol: 'MATICUSDT', name: 'Polygon', price: 0.8945, change: -0.0321, changePercent: -3.46 },
+  { symbol: 'XAUUSDT', name: 'Gold Ounce', price: 2035.80, change: 15.40, changePercent: 0.76 },
+  { symbol: 'GOLDUSDT', name: 'Gold Token', price: 2035.80, change: 15.40, changePercent: 0.76 },
+  { symbol: 'SILVERUSDT', name: 'Silver Ounce', price: 23.45, change: 0.85, changePercent: 3.76 },
+  { symbol: 'SHIBUSDT', name: 'Shiba Inu', price: 0.00000985, change: 0.00000045, changePercent: 4.79 },
+  { symbol: 'PEPEUSDT', name: 'Pepe', price: 0.00000123, change: 0.00000008, changePercent: 6.95 },
+  { symbol: 'ARBUSDT', name: 'Arbitrum', price: 1.845, change: 0.085, changePercent: 4.83 },
+  { symbol: 'OPUSDT', name: 'Optimism', price: 2.345, change: -0.098, changePercent: -4.01 },
+  { symbol: 'AAVEUSDT', name: 'Aave', price: 95.40, change: 3.25, changePercent: 3.52 },
+  { symbol: 'LINKUSDT', name: 'Chainlink', price: 14.85, change: 0.45, changePercent: 3.12 },
+  { symbol: 'UNIUSDT', name: 'Uniswap', price: 6.75, change: -0.23, changePercent: -3.29 },
+  { symbol: 'LTCUSDT', name: 'Litecoin', price: 72.45, change: 1.85, changePercent: 2.62 },
+  { symbol: 'ATOMUSDT', name: 'Cosmos', price: 9.85, change: -0.34, changePercent: -3.34 },
+  { symbol: 'FILUSDT', name: 'Filecoin', price: 5.45, change: 0.23, changePercent: 4.40 },
+  { symbol: 'AVAXUSDT', name: 'Avalanche', price: 37.85, change: 1.45, changePercent: 3.98 },
+  { symbol: 'DOTUSDT', name: 'Polkadot', price: 7.85, change: -0.25, changePercent: -3.09 },
+  { symbol: 'PLATINUMUSDT', name: 'Platinum Ounce', price: 945.60, change: 8.90, changePercent: 0.95 },
+  { symbol: 'PALLADIUMUSDT', name: 'Palladium Ounce', price: 1125.40, change: -12.30, changePercent: -1.08 }
 ]
 
 export default function WatchlistPanel() {
@@ -87,8 +104,19 @@ export default function WatchlistPanel() {
                   />
                 </button>
                 <div>
-                  <div className="text-white text-sm font-medium">{item.symbol}</div>
-                  <div className="text-gray-500 text-[10px]">{item.name}</div>
+                  <div className="flex items-center gap-1">
+                    <div className="text-white text-sm font-medium">{item.symbol}</div>
+                    {item.symbol.includes('GOLD') || item.symbol.includes('XAU') ? (
+                      <span className="text-xs bg-yellow-500/20 text-yellow-500 px-1 rounded">🥇</span>
+                    ) : item.symbol.includes('SILVER') ? (
+                      <span className="text-xs bg-gray-500/20 text-gray-400 px-1 rounded">⚪</span>
+                    ) : item.symbol.includes('PLATINUM') ? (
+                      <span className="text-xs bg-purple-500/20 text-purple-400 px-1 rounded">🔘</span>
+                    ) : item.symbol.includes('PALLADIUM') ? (
+                      <span className="text-xs bg-indigo-500/20 text-indigo-400 px-1 rounded">⚫</span>
+                    ) : null}
+                  </div>
+                  <div className="text-gray-500 text-[10px] truncate">{item.name}</div>
                 </div>
               </div>
               <div className="flex items-center gap-1">
@@ -101,7 +129,14 @@ export default function WatchlistPanel() {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-white text-xs font-semibold">
-                ${item.price.toLocaleString()}
+                {item.price >= 1000 
+                  ? `$${item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : item.price >= 1 
+                    ? `$${item.price.toFixed(4)}`
+                    : item.price >= 0.01
+                      ? `$${item.price.toFixed(6)}`
+                      : `$${item.price.toFixed(8)}`
+                }
               </span>
               <span
                 className={`text-xs font-medium ${
