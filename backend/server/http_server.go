@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/aphis/24hrt-backend/client"
@@ -148,19 +149,31 @@ func (s *Server) handleKlineHistory(c *gin.Context) {
 	})
 }
 
-// handleGetSymbols returns available trading symbols
+// handleGetSymbols returns available trading symbols from Binance
 func (s *Server) handleGetSymbols(c *gin.Context) {
-	symbols := []string{
-		"BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "SOLUSDT",
-		"XRPUSDT", "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "MATICUSDT",
-		"LINKUSDT", "UNIUSDT", "LTCUSDT", "ATOMUSDT", "FILUSDT",
-		"XAUUSDT", "GOLDUSDT", "SILVERUSDT", "PLATINUMUSDT", "PALLADIUMUSDT",
-		"SHIBUSDT", "PEPEUSDT", "ARBUSDT", "OPUSDT", "AAVEUSDT",
+	// Fetch real symbols from Binance API
+	prices, err := s.tradingClient.GetSymbolPrices()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   err.Error(),
+			"message": "Failed to fetch symbols from Binance",
+		})
+		return
+	}
+
+	// Extract symbol names from price data
+	var symbols []string
+	for _, price := range prices {
+		// Only include USDT pairs for now to keep it clean
+		if strings.HasSuffix(price.Symbol, "USDT") {
+			symbols = append(symbols, price.Symbol)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"symbols": symbols,
 		"count":   len(symbols),
+		"source":  "binance-api",
 	})
 }
 

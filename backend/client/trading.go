@@ -16,6 +16,7 @@ type TradingClient struct {
 	apiKey    string
 	secretKey string
 	isTestnet bool
+	timeOffset int64 // Cache server time offset
 }
 
 // NewTradingClient creates a new Binance trading client
@@ -30,12 +31,39 @@ func NewTradingClient(cfg *config.Config) *TradingClient {
 		log.Println("⚠️  Using Binance PRODUCTION - Real money!")
 	}
 
-	return &TradingClient{
+	tc := &TradingClient{
 		client:    client,
 		apiKey:    cfg.BinanceAPIKey,
 		secretKey: cfg.BinanceSecretKey,
 		isTestnet: cfg.UseTestnet,
 	}
+
+	// Sync time with server
+	if err := tc.syncTime(); err != nil {
+		log.Printf("⚠️  Failed to sync time: %v", err)
+	}
+
+	return tc
+}
+
+// syncTime synchronizes local time with Binance server time
+func (tc *TradingClient) syncTime() error {
+	serverTime, err := tc.client.NewServerTimeService().Do(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to get server time: %w", err)
+	}
+
+	localTime := time.Now().UnixNano() / int64(time.Millisecond)
+	tc.timeOffset = serverTime - localTime
+	
+	log.Printf("🕐 Time synchronized. Server offset: %dms", tc.timeOffset)
+	return nil
+}
+
+// getServerTime returns synchronized server time
+func (tc *TradingClient) getServerTime() int64 {
+	localTime := time.Now().UnixNano() / int64(time.Millisecond)
+	return localTime + tc.timeOffset
 }
 
 // OrderResult contains order execution details
@@ -53,6 +81,16 @@ type OrderResult struct {
 
 // PlaceMarketBuyOrder places a market buy order
 func (tc *TradingClient) PlaceMarketBuyOrder(symbol string, quantity string) (*OrderResult, error) {
+	// Check if API keys are configured
+	if tc.apiKey == "" || tc.apiKey == "your_testnet_api_key_here" {
+		return nil, fmt.Errorf("API keys not configured. Please set up Binance testnet API keys")
+	}
+
+	// Resync time before placing order
+	if err := tc.syncTime(); err != nil {
+		log.Printf("⚠️  Time sync failed, proceeding anyway: %v", err)
+	}
+
 	order, err := tc.client.NewCreateOrderService().
 		Symbol(symbol).
 		Side(binance.SideTypeBuy).
@@ -82,6 +120,16 @@ func (tc *TradingClient) PlaceMarketBuyOrder(symbol string, quantity string) (*O
 
 // PlaceMarketSellOrder places a market sell order
 func (tc *TradingClient) PlaceMarketSellOrder(symbol string, quantity string) (*OrderResult, error) {
+	// Check if API keys are configured
+	if tc.apiKey == "" || tc.apiKey == "your_testnet_api_key_here" {
+		return nil, fmt.Errorf("API keys not configured. Please set up Binance testnet API keys")
+	}
+
+	// Resync time before placing order
+	if err := tc.syncTime(); err != nil {
+		log.Printf("⚠️  Time sync failed, proceeding anyway: %v", err)
+	}
+
 	order, err := tc.client.NewCreateOrderService().
 		Symbol(symbol).
 		Side(binance.SideTypeSell).
@@ -111,6 +159,16 @@ func (tc *TradingClient) PlaceMarketSellOrder(symbol string, quantity string) (*
 
 // PlaceLimitBuyOrder places a limit buy order
 func (tc *TradingClient) PlaceLimitBuyOrder(symbol string, quantity string, price string) (*OrderResult, error) {
+	// Check if API keys are configured
+	if tc.apiKey == "" || tc.apiKey == "your_testnet_api_key_here" {
+		return nil, fmt.Errorf("API keys not configured. Please set up Binance testnet API keys")
+	}
+
+	// Resync time before placing order
+	if err := tc.syncTime(); err != nil {
+		log.Printf("⚠️  Time sync failed, proceeding anyway: %v", err)
+	}
+
 	order, err := tc.client.NewCreateOrderService().
 		Symbol(symbol).
 		Side(binance.SideTypeBuy).
@@ -140,6 +198,16 @@ func (tc *TradingClient) PlaceLimitBuyOrder(symbol string, quantity string, pric
 
 // PlaceLimitSellOrder places a limit sell order
 func (tc *TradingClient) PlaceLimitSellOrder(symbol string, quantity string, price string) (*OrderResult, error) {
+	// Check if API keys are configured
+	if tc.apiKey == "" || tc.apiKey == "your_testnet_api_key_here" {
+		return nil, fmt.Errorf("API keys not configured. Please set up Binance testnet API keys")
+	}
+
+	// Resync time before placing order
+	if err := tc.syncTime(); err != nil {
+		log.Printf("⚠️  Time sync failed, proceeding anyway: %v", err)
+	}
+
 	order, err := tc.client.NewCreateOrderService().
 		Symbol(symbol).
 		Side(binance.SideTypeSell).
@@ -191,6 +259,11 @@ type BalanceInfo struct {
 
 // GetAccountBalance retrieves account balance information
 func (tc *TradingClient) GetAccountBalance() ([]BalanceInfo, error) {
+	// Check if API keys are configured
+	if tc.apiKey == "" || tc.apiKey == "your_testnet_api_key_here" {
+		return nil, fmt.Errorf("API keys not configured. Please set up Binance testnet API keys")
+	}
+
 	account, err := tc.client.NewGetAccountService().Do(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get account info: %w", err)
@@ -283,6 +356,31 @@ type KlineData struct {
 	NumberOfTrades           int     `json:"numberOfTrades"`
 	TakerBuyBaseAssetVolume  string  `json:"takerBuyBaseAssetVolume"`
 	TakerBuyQuoteAssetVolume string  `json:"takerBuyQuoteAssetVolume"`
+}
+
+// SymbolPrice represents symbol price information
+type SymbolPrice struct {
+	Symbol string `json:"symbol"`
+	Price  string `json:"price"`
+}
+
+// GetSymbolPrices fetches all symbol prices from Binance
+func (tc *TradingClient) GetSymbolPrices() ([]SymbolPrice, error) {
+	prices, err := tc.client.NewListPricesService().Do(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get symbol prices: %w", err)
+	}
+
+	result := make([]SymbolPrice, len(prices))
+	for i, price := range prices {
+		result[i] = SymbolPrice{
+			Symbol: price.Symbol,
+			Price:  price.Price,
+		}
+	}
+
+	log.Printf("📊 Fetched %d symbol prices from Binance", len(result))
+	return result, nil
 }
 
 // GetKlines fetches historical candlestick data

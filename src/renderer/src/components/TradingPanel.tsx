@@ -31,13 +31,21 @@ export default function TradingPanel() {
     try {
       const response = await fetch('http://localhost:8080/api/balance')
       if (!response.ok) {
-        throw new Error('Failed to fetch balance')
+        const errorData = await response.json().catch(() => ({}))
+        if (errorData.error && errorData.error.includes('API keys not configured')) {
+          throw new Error('API keys not configured. Please check BINANCE_TESTNET_SETUP.md for instructions.')
+        }
+        throw new Error(errorData.error || 'Failed to fetch balance')
       }
       const data = await response.json()
       setBalances(data.balances || [])
     } catch (error) {
       console.error('Failed to fetch balance:', error)
-      // Keep using mock balance if API fails
+      setBalances([]) // Clear balances on error
+      // Show more helpful error message
+      if (error instanceof Error && error.message.includes('API keys not configured')) {
+        alert('⚠️ ' + error.message + '\n\nPlease:\n1. Get testnet keys from https://testnet.binance.vision/\n2. Copy .env.testnet to backend/.env\n3. Add your API keys')
+      }
     } finally {
       setIsLoadingBalance(false)
     }
@@ -45,7 +53,7 @@ export default function TradingPanel() {
 
   const getUSDTBalance = () => {
     const usdtBalance = balances.find(b => b.asset === 'USDT')
-    return usdtBalance ? parseFloat(usdtBalance.free) : 10000 // Fallback to mock balance
+    return usdtBalance ? parseFloat(usdtBalance.free) : 0
   }
 
   const getBTCBalance = () => {
@@ -104,7 +112,14 @@ export default function TradingPanel() {
       fetchBalance() // Refresh balance after successful order
     } catch (error) {
       console.error('❌ Order failed:', error)
-      alert('Failed to place order: ' + (error as Error).message)
+      let errorMessage = 'Failed to place order: ' + (error as Error).message
+      
+      // Show more helpful error message for API key issues
+      if (error instanceof Error && error.message.includes('API keys not configured')) {
+        errorMessage = '⚠️ API keys not configured!\n\nPlease:\n1. Get testnet keys from https://testnet.binance.vision/\n2. Copy .env.testnet to backend/.env\n3. Add your API keys\n4. Restart the backend'
+      }
+      
+      alert(errorMessage)
     }
   }
 
@@ -156,14 +171,23 @@ export default function TradingPanel() {
             {isLoadingBalance ? 'Loading...' : 'Refresh'}
           </button>
         </div>
-        <div className="flex justify-between text-xs">
-          <span className="text-gray-400">USDT</span>
-          <span className="text-white font-medium">{getUSDTBalance().toFixed(2)}</span>
-        </div>
-        <div className="flex justify-between text-xs">
-          <span className="text-gray-400">BTC</span>
-          <span className="text-white font-medium">{getBTCBalance().toFixed(8)}</span>
-        </div>
+        {balances.length === 0 ? (
+          <div className="text-center py-2">
+            <p className="text-gray-500 text-xs">No balance data available</p>
+            <p className="text-gray-600 text-xs mt-1">Please configure API keys</p>
+          </div>
+        ) : (
+          <>
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-400">USDT</span>
+              <span className="text-white font-medium">{getUSDTBalance().toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-400">BTC</span>
+              <span className="text-white font-medium">{getBTCBalance().toFixed(8)}</span>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Order Form */}
@@ -245,8 +269,10 @@ export default function TradingPanel() {
               setOrderSide('buy')
               handlePlaceOrder()
             }}
+            disabled={balances.length === 0 || getUSDTBalance() <= 0}
             className="flex items-center justify-center gap-2 py-2.5 bg-[#26a69a] 
-                     hover:bg-[#2ca89f] text-white font-semibold rounded transition-colors"
+                     hover:bg-[#2ca89f] text-white font-semibold rounded transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#26a69a]"
           >
             <TrendingUp className="w-4 h-4" />
             Buy
@@ -256,8 +282,10 @@ export default function TradingPanel() {
               setOrderSide('sell')
               handlePlaceOrder()
             }}
+            disabled={balances.length === 0 || getBTCBalance() <= 0}
             className="flex items-center justify-center gap-2 py-2.5 bg-[#ef5350] 
-                     hover:bg-[#f15b59] text-white font-semibold rounded transition-colors"
+                     hover:bg-[#f15b59] text-white font-semibold rounded transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#ef5350]"
           >
             <TrendingDown className="w-4 h-4" />
             Sell
@@ -268,7 +296,12 @@ export default function TradingPanel() {
         <div className="pt-3 border-t border-[#2B2B43] space-y-1">
           <div className="flex justify-between text-xs">
             <span className="text-gray-400">Max Buy</span>
-            <span className="text-white">0.2312 BTC</span>
+            <span className="text-white">
+              {currentPrice > 0 && getUSDTBalance() > 0 
+                ? (getUSDTBalance() / currentPrice).toFixed(6) + ' BTC'
+                : '0.000000 BTC'
+              }
+            </span>
           </div>
           <div className="flex justify-between text-xs">
             <span className="text-gray-400">Trading Fee</span>
