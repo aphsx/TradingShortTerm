@@ -21,6 +21,7 @@ import {
   ZoomIn,
   ZoomOut
 } from 'lucide-react'
+import CountdownTimer from './CountdownTimer'
 
 export default function CandlestickChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null)
@@ -305,6 +306,7 @@ export default function CandlestickChart() {
               </span>
               {getTrendIcon()}
             </div>
+            <CountdownTimer />
             <div className={`flex items-center gap-1 ${getTrendColor()}`}>
               <span className="text-sm font-semibold">
                 {priceChange > 0 ? '+' : ''}{priceChange.toFixed(2)}

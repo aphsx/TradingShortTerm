@@ -6,9 +6,9 @@ import {
   TrendingUp,
   BarChart3,
   Settings,
-  Bell,
   User
 } from 'lucide-react'
+import PriceAlerts from './PriceAlerts'
 
 const TIMEFRAMES = [
   { label: '1m', value: '1m' },
@@ -20,7 +20,7 @@ const TIMEFRAMES = [
 ]
 
 export default function TopBar() {
-  const { symbol, ticker, interval, setInterval, currentPrice } = useTradingStore()
+  const { ticker, interval, setInterval, currentPrice } = useTradingStore()
 
   return (
     <div className="h-12 bg-[#1E222D] border-b border-[#2B2B43] flex items-center px-3 justify-between">
@@ -105,9 +105,7 @@ export default function TopBar() {
         <button className="p-2 hover:bg-[#2B2B43] rounded transition-colors">
           <TrendingUp className="w-4 h-4 text-gray-400" />
         </button>
-        <button className="p-2 hover:bg-[#2B2B43] rounded transition-colors">
-          <Bell className="w-4 h-4 text-gray-400" />
-        </button>
+        <PriceAlerts />
         <button className="p-2 hover:bg-[#2B2B43] rounded transition-colors">
           <Settings className="w-4 h-4 text-gray-400" />
         </button>

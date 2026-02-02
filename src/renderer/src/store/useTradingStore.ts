@@ -37,6 +37,9 @@ interface TradingState {
   // Loading states
   isLoadingHistory: boolean
   
+  // Countdown timer
+  candleCloseTime: number | null
+  
   // Actions
   setSymbol: (symbol: string) => void
   setInterval: (interval: string) => void
@@ -47,6 +50,7 @@ interface TradingState {
   updateCandle: (data: any) => void
   updatePrice: (data: any) => void
   getCandleArray: () => CandlestickData[]
+  updateCandleCloseTime: (time: number) => void
 }
 
 export const useTradingStore = create<TradingState>((set, get) => ({
@@ -61,6 +65,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   isConnected: false,
   isPriceConnected: false,
   isLoadingHistory: false,
+  candleCloseTime: null,
 
   setSymbol: (symbol: string) => {
     const state = get()
@@ -249,6 +254,10 @@ export const useTradingStore = create<TradingState>((set, get) => ({
         price: price
       } : null
     })
+  },
+
+  updateCandleCloseTime: (time: number) => {
+    set({ candleCloseTime: time })
   },
 
   getCandleArray: () => {
