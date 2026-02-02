@@ -3,7 +3,13 @@ import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-  main: {},
+  main: {
+    build: {
+      rollupOptions: {
+        external: ['child_process']
+      }
+    }
+  },
   preload: {},
   renderer: {
     resolve: {
@@ -11,6 +17,13 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
-    plugins: [react()]
+    plugins: [react()],
+    server: {
+      middlewareMode: false,
+      hmr: {
+        host: 'localhost',
+        port: 5173
+      }
+    }
   }
 })
