@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { createChart, IChartApi, Time, CandlestickData, ISeriesApi, CandlestickSeriesPartialOptions } from 'lightweight-charts'
+import { 
+  createChart, 
+  IChartApi, 
+  Time, 
+  CandlestickData,
+  ColorType,
+  CandlestickSeries
+} from 'lightweight-charts'
 import { useTradingStore } from '../store/trading'
 import { apiService, KlineData } from '../services/api'
 import { Card } from './ui/card'
@@ -20,10 +27,10 @@ export function TradingChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<any>(null)
-  const hasSeriesCreated = useRef(false)
   
   const [timeframe, setTimeframe] = useState('1m')
   const [isLoading, setIsLoading] = useState(true)
+  const [seriesReady, setSeriesReady] = useState(false)
   
   const isConnected = useTradingStore((state) => state.isConnected)
   const currentPrice = useTradingStore((state) => state.currentPrice)
@@ -36,7 +43,7 @@ export function TradingChart() {
     }
 
     // If chart already exists, don't recreate it
-    if (chartRef.current && hasSeriesCreated.current) {
+    if (chartRef.current && seriesReady) {
       console.log('Chart already created, skipping...')
       return
     }
@@ -50,7 +57,7 @@ export function TradingChart() {
         chartRef.current.remove()
         chartRef.current = null
         seriesRef.current = null
-        hasSeriesCreated.current = false
+        setSeriesReady(false)
       }
 
       const width = container.clientWidth
@@ -62,7 +69,7 @@ export function TradingChart() {
         width: width,
         height: height,
         layout: {
-          background: { color: 'rgba(15, 23, 42, 0)' },
+          background: { type: ColorType.Solid, color: 'rgba(15, 23, 42, 0)' },
           textColor: '#cbd5e1'
         },
         grid: {
@@ -87,21 +94,22 @@ export function TradingChart() {
         return
       }
 
-      const candlestickSeriesOptions: CandlestickSeriesPartialOptions = {
+      const candlestickSeriesInstance = chart.addSeries(CandlestickSeries, {
         upColor: '#16a34a',
         downColor: '#dc2626',
         borderVisible: false,
         wickUpColor: '#16a34a',
         wickDownColor: '#dc2626'
-      }
-
-      const candlestickSeries = chart.addSeries('Candlestick', candlestickSeriesOptions)
+      })
 
       console.log('✅ Chart and candlestick series created successfully')
 
       chartRef.current = chart
-      seriesRef.current = candlestickSeries
-      hasSeriesCreated.current = true
+      seriesRef.current = candlestickSeriesInstance
+      
+      // Trigger initial data load
+      setIsLoading(true)
+      setSeriesReady(true)
 
       const handleResize = (): void => {
         if (chartContainerRef.current && chartRef.current) {
@@ -119,7 +127,7 @@ export function TradingChart() {
           chartRef.current.remove()
           chartRef.current = null
           seriesRef.current = null
-          hasSeriesCreated.current = false
+          setSeriesReady(false)
         }
       }
     } catch (error) {
@@ -130,8 +138,9 @@ export function TradingChart() {
 
   // Load klines data when timeframe changes
   useEffect(() => {
-    if (!seriesRef.current || !hasSeriesCreated.current) {
-      console.log('⏸️ Series not ready yet')
+    if (!seriesRef.current || !seriesReady) {
+      console.log('⏸️ Series not ready yet, will retry when ready')
+      setIsLoading(false)
       return
     }
 
@@ -143,6 +152,12 @@ export function TradingChart() {
         const klines = await apiService.getKlines('BTCUSDT', timeframe, 500)
         console.log(`✅ Received ${klines.length} klines from API`)
         
+        if (!klines || klines.length === 0) {
+          console.warn('⚠️ No klines data received from API')
+          setIsLoading(false)
+          return
+        }
+        
         const candlestickData: CandlestickData[] = klines.map((k: KlineData) => ({
           time: Math.floor(k.openTime / 1000) as Time,
           open: parseFloat(k.open),
@@ -151,22 +166,22 @@ export function TradingChart() {
           close: parseFloat(k.close)
         }))
 
-        if (candlestickData.length > 0) {
+        if (candlestickData.length > 0 && seriesRef.current) {
           seriesRef.current.setData(candlestickData)
           console.log(`✅ Loaded ${candlestickData.length} candlesticks to chart`)
+          setIsLoading(false)
         } else {
-          console.warn('⚠️ No candlestick data received')
+          console.warn('⚠️ No valid candlestick data to display')
+          setIsLoading(false)
         }
       } catch (error) {
         console.error('❌ Failed to load klines:', error)
-      } finally {
         setIsLoading(false)
-        console.log('✅ Loading complete, isLoading set to false')
       }
     }
 
     loadKlines()
-  }, [timeframe])
+  }, [timeframe, seriesReady])
 
   // Update with real-time price (convert to candlestick format)
   useEffect(() => {
