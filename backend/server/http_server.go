@@ -88,6 +88,9 @@ func (s *Server) setupRoutes() {
 
 		// Place order (will be implemented later)
 		api.POST("/order", s.handlePlaceOrder)
+
+		// Get historical klines/candlesticks
+		api.GET("/klines", s.handleGetKlines)
 	}
 }
 
@@ -200,6 +203,24 @@ func (s *Server) handlePlaceOrder(c *gin.Context) {
 		"quantity": result.Quantity,
 		"price":    result.Price,
 	})
+}
+
+// handleGetKlines returns historical candlestick data
+func (s *Server) handleGetKlines(c *gin.Context) {
+	symbol := c.DefaultQuery("symbol", "BTCUSDT")
+	interval := c.DefaultQuery("interval", "1m")
+	limit := c.DefaultQuery("limit", "100")
+
+	klines, err := s.tradingClient.GetKlines(symbol, interval, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+			"message": "Failed to fetch klines",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, klines)
 }
 
 // Start runs the HTTP server

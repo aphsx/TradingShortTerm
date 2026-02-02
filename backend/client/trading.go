@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 
 	"github.com/adshao/go-binance/v2"
 	"github.com/aphis/24hrt-backend/config"
@@ -266,4 +267,57 @@ func (tc *TradingClient) GetServerTime() (int64, error) {
 
 	log.Printf("🕐 Server time: %d", serverTime)
 	return serverTime, nil
+}
+
+// KlineData represents candlestick data
+type KlineData struct {
+	OpenTime                 int64   `json:"openTime"`
+	Open                     string  `json:"open"`
+	High                     string  `json:"high"`
+	Low                      string  `json:"low"`
+	Close                    string  `json:"close"`
+	Volume                   string  `json:"volume"`
+	CloseTime                int64   `json:"closeTime"`
+	QuoteAssetVolume         string  `json:"quoteAssetVolume"`
+	NumberOfTrades           int     `json:"numberOfTrades"`
+	TakerBuyBaseAssetVolume  string  `json:"takerBuyBaseAssetVolume"`
+	TakerBuyQuoteAssetVolume string  `json:"takerBuyQuoteAssetVolume"`
+}
+
+// GetKlines fetches historical candlestick data
+func (tc *TradingClient) GetKlines(symbol, interval, limitStr string) ([]KlineData, error) {
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		limit = 100
+	}
+
+	klines, err := tc.client.NewKlinesService().
+		Symbol(symbol).
+		Interval(interval).
+		Limit(limit).
+		Do(context.Background())
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get klines: %w", err)
+	}
+
+	result := make([]KlineData, len(klines))
+	for i, k := range klines {
+		result[i] = KlineData{
+			OpenTime:                 k.OpenTime,
+			Open:                     k.Open,
+			High:                     k.High,
+			Low:                      k.Low,
+			Close:                    k.Close,
+			Volume:                   k.Volume,
+			CloseTime:                k.CloseTime,
+			QuoteAssetVolume:         k.QuoteAssetVolume,
+			NumberOfTrades:           int(k.TradeNum),
+			TakerBuyBaseAssetVolume:  k.TakerBuyBaseAssetVolume,
+			TakerBuyQuoteAssetVolume: k.TakerBuyQuoteAssetVolume,
+		}
+	}
+
+	log.Printf("📊 Fetched %d klines for %s (%s)", len(result), symbol, interval)
+	return result, nil
 }

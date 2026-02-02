@@ -72,6 +72,33 @@ class ApiService {
       return false
     }
   }
+
+  async getKlines(symbol: string = 'BTCUSDT', interval: string = '1m', limit: number = 500): Promise<KlineData[]> {
+    try {
+      const response = await fetch(`${BASE_URL}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`)
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      return await response.json()
+    } catch (error) {
+      console.error('Failed to fetch klines:', error)
+      throw error
+    }
+  }
+}
+
+export interface KlineData {
+  openTime: number
+  open: string
+  high: string
+  low: string
+  close: string
+  volume: string
+  closeTime: number
+  quoteAssetVolume: string
+  numberOfTrades: number
+  takerBuyBaseAssetVolume: string
+  takerBuyQuoteAssetVolume: string
 }
 
 export const apiService = new ApiService()
