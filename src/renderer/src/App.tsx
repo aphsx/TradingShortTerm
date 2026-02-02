@@ -4,6 +4,8 @@ import { BalanceDisplay } from './components/BalanceDisplay'
 import { OrderPanel } from './components/OrderPanel'
 import { wsService } from './services/websocket'
 import { useTradingStore } from './store/trading'
+import { Badge } from './components/ui/badge'
+import { AlertCircle, CheckCircle2 } from 'lucide-react'
 import './assets/main.css'
 
 function App(): React.JSX.Element {
@@ -11,14 +13,11 @@ function App(): React.JSX.Element {
   const currentPrice = useTradingStore((state) => state.currentPrice)
 
   useEffect(() => {
-    // Connect to WebSocket when component mounts
-    // Wait a bit for backend to start
     const timer = setTimeout(() => {
       console.log('Connecting to backend WebSocket...')
       wsService.connect()
     }, 2000)
 
-    // Cleanup: disconnect when component unmounts
     return () => {
       clearTimeout(timer)
       wsService.disconnect()
@@ -26,84 +25,61 @@ function App(): React.JSX.Element {
   }, [])
 
   return (
-    <div style={{ 
-      width: '100vw', 
-      height: '100vh', 
-      display: 'flex', 
-      flexDirection: 'column',
-      background: '#1e1e1e',
-      color: '#fff',
-      margin: 0,
-      padding: 0,
-      overflow: 'hidden'
-    }}>
+    <div className="w-screen h-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
       {/* Header */}
-      <header style={{
-        padding: '15px 20px',
-        background: '#252525',
-        borderBottom: '2px solid #2962FF',
-        flexShrink: 0
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <header className="flex-shrink-0 border-b border-amber-900/30 bg-gradient-to-r from-slate-900 to-slate-800 px-6 py-4">
+        <div className="flex items-center justify-between">
           <div>
-            <h1 style={{ margin: 0, fontSize: '24px' }}>
+            <h1 className="text-3xl font-bold text-white">
               ⚡ 24HrT Trading Bot
             </h1>
-            <p style={{ margin: '5px 0 0 0', color: '#888', fontSize: '14px' }}>
+            <p className="mt-1 text-sm text-slate-400">
               Real-time Binance Trading Dashboard
             </p>
           </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ 
-              display: 'inline-block',
-              padding: '8px 16px',
-              background: isConnected ? '#1b5e20' : '#b71c1c',
-              borderRadius: '20px',
-              fontSize: '12px',
-              fontWeight: 'bold'
-            }}>
-              {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
-            </div>
-            {currentPrice && (
-              <div style={{ marginTop: '8px', fontSize: '12px', color: '#888' }}>
-                {currentPrice.symbol}: <span style={{ color: '#2962FF', fontWeight: 'bold', fontSize: '16px' }}>
-                  ${parseFloat(currentPrice.price).toFixed(2)}
-                </span>
+          
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <div className="flex items-center gap-2 mb-2">
+                {isConnected ? (
+                  <>
+                    <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    <Badge className="bg-green-500/20 text-green-300 border-green-500/30">
+                      Connected
+                    </Badge>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="h-5 w-5 text-red-500" />
+                    <Badge className="bg-red-500/20 text-red-300 border-red-500/30">
+                      Disconnected
+                    </Badge>
+                  </>
+                )}
               </div>
-            )}
+              
+              {currentPrice && (
+                <div className="text-sm text-slate-400">
+                  {currentPrice.symbol}: {' '}
+                  <span className="font-mono text-lg font-bold text-amber-400">
+                    ${parseFloat(currentPrice.price).toFixed(2)}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </header>
       
       {/* Main Content */}
-      <main style={{ 
-        flex: 1, 
-        display: 'flex',
-        overflow: 'hidden'
-      }}>
+      <main className="flex-1 flex overflow-hidden gap-4 p-4">
         {/* Left Panel - Chart */}
-        <div style={{ 
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          padding: '15px',
-          overflow: 'auto'
-        }}>
+        <div className="flex-1 flex flex-col overflow-hidden">
           <TradingChart />
         </div>
 
         {/* Right Panel - Controls */}
-        <div style={{
-          width: '350px',
-          padding: '15px',
-          background: '#1a1a1a',
-          borderLeft: '1px solid #2b2b2b',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '15px',
-          overflowY: 'auto',
-          flexShrink: 0
-        }}>
+        <div className="w-96 flex flex-col gap-4 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900">
           <BalanceDisplay />
           <OrderPanel />
         </div>

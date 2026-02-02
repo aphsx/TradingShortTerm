@@ -1,17 +1,18 @@
 import { useEffect, useRef } from 'react'
-import { createChart, IChartApi, ISeriesApi, Time } from 'lightweight-charts'
+import { createChart, IChartApi, Time } from 'lightweight-charts'
 import { useTradingStore } from '../store/trading'
+import { Card } from './ui/card'
+import { Badge } from './ui/badge'
+import { CheckCircle2, AlertCircle } from 'lucide-react'
 
-export function TradingChart(): JSX.Element {
+export function TradingChart() {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
-  const seriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const seriesRef = useRef<any>(null)
   
-  // Use selectors to prevent unnecessary re-renders
   const isConnected = useTradingStore((state) => state.isConnected)
   const currentPrice = useTradingStore((state) => state.currentPrice)
 
-  // Initialize chart once
   useEffect(() => {
     if (!chartContainerRef.current) {
       console.warn('Chart container not ready')
@@ -29,21 +30,21 @@ export function TradingChart(): JSX.Element {
         width: width,
         height: height,
         layout: {
-          background: { color: '#1e1e1e' },
-          textColor: '#d1d4dc'
+          background: { color: 'rgba(15, 23, 42, 0)' },
+          textColor: '#cbd5e1'
         },
         grid: {
-          vertLines: { color: '#2b2b2b' },
-          horzLines: { color: '#2b2b2b' }
+          vertLines: { color: '#334155' },
+          horzLines: { color: '#334155' }
         },
         crosshair: {
           mode: 1
         },
         rightPriceScale: {
-          borderColor: '#2b2b2b'
+          borderColor: '#334155'
         },
         timeScale: {
-          borderColor: '#2b2b2b',
+          borderColor: '#334155',
           timeVisible: true,
           secondsVisible: false
         }
@@ -54,19 +55,18 @@ export function TradingChart(): JSX.Element {
         return
       }
 
-      const lineSeries = chart.addLineSeries({
-        color: '#2962FF',
+      const lineSeries = chart.addSeries({
+        color: '#fbbf24',
         lineWidth: 2,
         crosshairMarkerVisible: true,
         crosshairMarkerRadius: 4,
         lastValueVisible: true,
         priceLineVisible: true
-      })
+      } as any)
 
       chartRef.current = chart
       seriesRef.current = lineSeries
 
-      // Handle window resize
       const handleResize = (): void => {
         if (chartContainerRef.current && chartRef.current) {
           chartRef.current.applyOptions({
@@ -83,54 +83,67 @@ export function TradingChart(): JSX.Element {
       }
     } catch (error) {
       console.error('Error initializing chart:', error)
+      return
     }
   }, [])
 
-  // Update chart with new price data - NO RE-RENDER on every tick
   useEffect(() => {
     if (!seriesRef.current || !currentPrice) return
 
-    const dataPoint = {
-      time: Math.floor(currentPrice.timestamp / 1000) as Time,
-      value: parseFloat(currentPrice.price)
-    }
+    try {
+      const dataPoint = {
+        time: Math.floor(currentPrice.timestamp / 1000) as Time,
+        value: parseFloat(currentPrice.price)
+      }
 
-    // Direct update to chart, no React re-render
-    seriesRef.current.update(dataPoint)
+      // Ensure the value is a valid number
+      if (!isFinite(dataPoint.value)) {
+        console.warn('Invalid price value:', currentPrice.price)
+        return
+      }
+
+      seriesRef.current.update(dataPoint)
+    } catch (error) {
+      console.error('Error updating chart data:', error)
+    }
   }, [currentPrice])
 
   return (
-    <div style={{ width: '100%', height: '100%' }}>
-      <div style={{ 
-        padding: '10px', 
-        background: '#1e1e1e', 
-        color: '#fff',
-        borderBottom: '1px solid #2b2b2b'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          <div>
-            <span style={{ color: '#888' }}>Status: </span>
-            <span style={{ color: isConnected ? '#4caf50' : '#f44336' }}>
-              {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
-            </span>
+    <Card className="w-full h-full flex flex-col border-amber-900/30 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-950 overflow-hidden">
+      <div className="flex-shrink-0 border-b border-slate-800 bg-slate-900/50 px-4 py-3">
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2">
+            {isConnected ? (
+              <>
+                <CheckCircle2 className="h-5 w-5 text-green-500" />
+                <Badge className="bg-green-500/20 text-green-300 border-green-500/30">Connected</Badge>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="h-5 w-5 text-red-500" />
+                <Badge className="bg-red-500/20 text-red-300 border-red-500/30">Disconnected</Badge>
+              </>
+            )}
           </div>
+          
           {currentPrice && (
             <>
               <div>
-                <span style={{ color: '#888' }}>Symbol: </span>
-                <span style={{ fontWeight: 'bold' }}>{currentPrice.symbol}</span>
+                <span className="text-xs text-slate-400">Symbol</span>
+                <div className="font-semibold text-white">{currentPrice.symbol}</div>
               </div>
               <div>
-                <span style={{ color: '#888' }}>Price: </span>
-                <span style={{ fontSize: '20px', fontWeight: 'bold', color: '#2962FF' }}>
+                <span className="text-xs text-slate-400">Current Price</span>
+                <div className="text-2xl font-bold text-amber-400 font-mono">
                   ${parseFloat(currentPrice.price).toFixed(2)}
-                </span>
+                </div>
               </div>
             </>
           )}
         </div>
       </div>
-      <div ref={chartContainerRef} style={{ width: '100%', height: 'calc(100% - 60px)' }} />
-    </div>
+      
+      <div ref={chartContainerRef} className="flex-1 w-full overflow-hidden" />
+    </Card>
   )
 }

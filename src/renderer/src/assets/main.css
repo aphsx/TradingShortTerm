@@ -1,12 +1,41 @@
-@import './base.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 13% 9%;
+    --foreground: 220 13% 95%;
+    --card: 220 13% 13%;
+    --card-foreground: 220 13% 95%;
+    --primary: 59 100% 50%;
+    --primary-foreground: 220 13% 9%;
+    --secondary: 0 84% 60%;
+    --secondary-foreground: 220 13% 95%;
+    --muted: 220 13% 30%;
+    --muted-foreground: 220 13% 65%;
+    --accent: 220 100% 60%;
+    --accent-foreground: 220 13% 9%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 220 13% 95%;
+    --border: 220 13% 20%;
+    --input: 220 13% 15%;
+    --ring: 59 100% 50%;
+    --radius: 0.5rem;
+  }
+}
+
+html {
+  color-scheme: dark;
+  scroll-behavior: smooth;
+}
 
 body {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  margin: 0;
+  padding: 0;
   overflow: hidden;
-  background-image: url('./wavy-lines.svg');
-  background-size: cover;
   user-select: none;
 }
 

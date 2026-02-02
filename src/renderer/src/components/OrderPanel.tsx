@@ -1,8 +1,15 @@
 import { useState } from 'react'
 import { apiService, OrderRequest } from '../services/api'
 import { useTradingStore } from '../store/trading'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Label } from './ui/label'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card'
+import { Alert, AlertDescription } from './ui/alert'
+import { Badge } from './ui/badge'
+import { ArrowUpRight, ArrowDownLeft, AlertCircle, CheckCircle } from 'lucide-react'
 
-export function OrderPanel(): JSX.Element {
+export function OrderPanel() {
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY')
   const [quantity, setQuantity] = useState('')
   const [loading, setLoading] = useState(false)
@@ -48,165 +55,139 @@ export function OrderPanel(): JSX.Element {
     }
   }
 
+  const total = quantity && currentPrice 
+    ? (parseFloat(quantity) * parseFloat(currentPrice.price)).toFixed(2)
+    : '0.00'
+
   return (
-    <div
-      style={{
-        padding: '15px',
-        background: '#252525',
-        borderRadius: '8px'
-      }}
-    >
-      <h3 style={{ margin: '0 0 15px 0', fontSize: '16px', color: '#fff' }}>📊 Place Order</h3>
-
-      {/* Side selector */}
-      <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', fontSize: '12px', color: '#888', marginBottom: '8px' }}>
-          Order Type
-        </label>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button
-            onClick={() => setSide('BUY')}
-            disabled={loading}
-            style={{
-              flex: 1,
-              padding: '10px',
-              background: side === 'BUY' ? '#4caf50' : '#2b2b2b',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              fontWeight: 'bold',
-              transition: 'all 0.2s'
-            }}
-          >
-            🟢 BUY
-          </button>
-          <button
-            onClick={() => setSide('SELL')}
-            disabled={loading}
-            style={{
-              flex: 1,
-              padding: '10px',
-              background: side === 'SELL' ? '#f44336' : '#2b2b2b',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              fontWeight: 'bold',
-              transition: 'all 0.2s'
-            }}
-          >
-            🔴 SELL
-          </button>
-        </div>
-      </div>
-
-      {/* Quantity input */}
-      <div style={{ marginBottom: '15px' }}>
-        <label
-          htmlFor="quantity"
-          style={{ display: 'block', fontSize: '12px', color: '#888', marginBottom: '8px' }}
-        >
-          Quantity ({currentPrice?.symbol.replace('USDT', '') || 'BTC'})
-        </label>
-        <input
-          id="quantity"
-          type="number"
-          value={quantity}
-          onChange={(e) => setQuantity(e.target.value)}
-          placeholder="0.001"
-          step="0.001"
-          min="0"
-          disabled={loading}
-          style={{
-            width: '100%',
-            padding: '10px',
-            background: '#1e1e1e',
-            border: '1px solid #2b2b2b',
-            borderRadius: '6px',
-            color: '#fff',
-            fontSize: '14px',
-            boxSizing: 'border-box'
-          }}
-        />
-      </div>
-
-      {/* Current price info */}
-      {currentPrice && (
-        <div
-          style={{
-            padding: '10px',
-            background: '#1e1e1e',
-            borderRadius: '6px',
-            marginBottom: '15px',
-            fontSize: '12px',
-            color: '#888'
-          }}
-        >
+    <Card className="w-full border-amber-900/30 bg-gradient-to-b from-slate-900 to-slate-950">
+      <CardHeader className="pb-4">
+        <div className="flex items-center justify-between">
           <div>
-            Current Price: <span style={{ color: '#2962FF', fontWeight: 'bold' }}>
-              ${parseFloat(currentPrice.price).toFixed(2)}
-            </span>
+            <CardTitle className="text-lg text-white">Place Order</CardTitle>
+            <CardDescription className="text-slate-400">
+              {currentPrice?.symbol || 'BTCUSDT'} Market Order
+            </CardDescription>
           </div>
-          {quantity && parseFloat(quantity) > 0 && (
-            <div style={{ marginTop: '5px' }}>
-              Total: <span style={{ color: '#fff', fontWeight: 'bold' }}>
-                ${(parseFloat(quantity) * parseFloat(currentPrice.price)).toFixed(2)} USDT
+          <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20">
+            Testnet
+          </Badge>
+        </div>
+      </CardHeader>
+      
+      <CardContent className="space-y-5">
+        {/* Buy/Sell Toggle */}
+        <div className="space-y-2">
+          <Label className="text-xs text-slate-400">Order Type</Label>
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              onClick={() => setSide('BUY')}
+              disabled={loading}
+              variant={side === 'BUY' ? 'default' : 'outline'}
+              className={`h-12 font-semibold transition-all ${
+                side === 'BUY'
+                  ? 'bg-green-600 hover:bg-green-700 text-white border-green-500'
+                  : 'border-slate-700 text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              <ArrowUpRight className="mr-2 h-4 w-4" />
+              BUY
+            </Button>
+            <Button
+              onClick={() => setSide('SELL')}
+              disabled={loading}
+              variant={side === 'SELL' ? 'default' : 'outline'}
+              className={`h-12 font-semibold transition-all ${
+                side === 'SELL'
+                  ? 'bg-red-600 hover:bg-red-700 text-white border-red-500'
+                  : 'border-slate-700 text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              <ArrowDownLeft className="mr-2 h-4 w-4" />
+              SELL
+            </Button>
+          </div>
+        </div>
+
+        {/* Quantity Input */}
+        <div className="space-y-2">
+          <Label htmlFor="quantity" className="text-xs text-slate-400">
+            Quantity ({currentPrice?.symbol.replace('USDT', '') || 'BTC'})
+          </Label>
+          <Input
+            id="quantity"
+            type="number"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            placeholder="0.001"
+            step="0.001"
+            min="0"
+            disabled={loading}
+            className="bg-slate-900 border-slate-700 text-white placeholder:text-slate-600 focus:border-amber-500 focus:ring-amber-500/20"
+          />
+        </div>
+
+        {/* Current Price & Total */}
+        {currentPrice && (
+          <div className="space-y-3 rounded-lg bg-slate-900/50 p-4 border border-slate-800">
+            <div className="flex justify-between text-sm">
+              <span className="text-slate-400">Current Price</span>
+              <span className="font-mono text-amber-400 font-semibold">
+                ${parseFloat(currentPrice.price).toFixed(2)}
               </span>
             </div>
-          )}
-        </div>
-      )}
+            {quantity && parseFloat(quantity) > 0 && (
+              <div className="flex justify-between text-sm border-t border-slate-700 pt-3">
+                <span className="text-slate-400">Total Order Value</span>
+                <span className="font-mono text-white font-semibold">
+                  ${total} USDT
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
-      {/* Place order button */}
-      <button
-        onClick={handlePlaceOrder}
-        disabled={loading || !currentPrice}
-        style={{
-          width: '100%',
-          padding: '12px',
-          background: side === 'BUY' ? '#4caf50' : '#f44336',
-          color: '#fff',
-          border: 'none',
-          borderRadius: '6px',
-          cursor: loading || !currentPrice ? 'not-allowed' : 'pointer',
-          fontSize: '14px',
-          fontWeight: 'bold',
-          opacity: loading || !currentPrice ? 0.6 : 1,
-          transition: 'all 0.2s'
-        }}
-      >
-        {loading ? '⏳ Placing Order...' : `${side === 'BUY' ? '🟢 BUY' : '🔴 SELL'} ${currentPrice?.symbol || 'BTCUSDT'}`}
-      </button>
-
-      {/* Status message */}
-      {message && (
-        <div
-          style={{
-            marginTop: '15px',
-            padding: '10px',
-            background: message.type === 'success' ? '#1b5e20' : '#b71c1c',
-            borderRadius: '6px',
-            fontSize: '12px',
-            color: '#fff'
-          }}
+        {/* Place Order Button */}
+        <Button
+          onClick={handlePlaceOrder}
+          disabled={loading || !currentPrice}
+          className={`w-full h-12 font-semibold text-base transition-all ${
+            side === 'BUY'
+              ? 'bg-green-600 hover:bg-green-700 disabled:bg-green-900/50'
+              : 'bg-red-600 hover:bg-red-700 disabled:bg-red-900/50'
+          }`}
         >
-          {message.text}
-        </div>
-      )}
+          {loading ? (
+            <>
+              <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full mr-2" />
+              Placing Order...
+            </>
+          ) : (
+            <>
+              {side === 'BUY' ? <ArrowUpRight className="mr-2 h-5 w-5" /> : <ArrowDownLeft className="mr-2 h-5 w-5" />}
+              {side === 'BUY' ? 'Buy' : 'Sell'} {currentPrice?.symbol || 'BTCUSDT'}
+            </>
+          )}
+        </Button>
 
-      <div
-        style={{
-          marginTop: '15px',
-          padding: '10px',
-          background: '#1e1e1e',
-          borderRadius: '6px',
-          fontSize: '11px',
-          color: '#888'
-        }}
-      >
-        ⚠️ <strong>Testnet Mode</strong> - Using test funds only
-      </div>
-    </div>
+        {/* Messages */}
+        {message && (
+          <Alert className={`border-l-4 ${
+            message.type === 'success'
+              ? 'border-l-green-500 bg-green-950/30 border border-green-900/50'
+              : 'border-l-red-500 bg-red-950/30 border border-red-900/50'
+          }`}>
+            {message.type === 'success' ? (
+              <CheckCircle className="h-4 w-4 text-green-400 mr-2" />
+            ) : (
+              <AlertCircle className="h-4 w-4 text-red-400 mr-2" />
+            )}
+            <AlertDescription className={message.type === 'success' ? 'text-green-300' : 'text-red-300'}>
+              {message.text}
+            </AlertDescription>
+          </Alert>
+        )}
+      </CardContent>
+    </Card>
   )
 }
