@@ -96,6 +96,9 @@ func (s *Server) setupRoutes() {
 
 // HandlePriceWebSocket upgrades HTTP to WebSocket for price streaming
 func (s *Server) handlePriceWebSocket(c *gin.Context) {
+	// Get symbol from query parameter, default to BTCUSDT
+	symbol := c.DefaultQuery("symbol", "BTCUSDT")
+	
 	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("Failed to upgrade connection: %v", err)

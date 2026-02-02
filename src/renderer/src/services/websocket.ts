@@ -3,22 +3,31 @@ import { useTradingStore } from '../store/trading'
 class WebSocketService {
   private ws: WebSocket | null = null
   private reconnectTimeout: NodeJS.Timeout | null = null
-  private readonly url = 'ws://localhost:8080/api/price'
+  private readonly baseUrl = 'ws://localhost:8080/api/price'
   private readonly reconnectDelay = 3000
+  private currentSymbol: string = 'BTCUSDT'
 
-  connect(): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      console.log('WebSocket already connected')
+  connect(symbol: string = 'BTCUSDT'): void {
+    // If switching symbols, close existing connection
+    if (this.ws?.readyState === WebSocket.OPEN && this.currentSymbol !== symbol) {
+      console.log(`Switching from ${this.currentSymbol} to ${symbol}`)
+      this.disconnect()
+    }
+
+    if (this.ws?.readyState === WebSocket.OPEN && this.currentSymbol === symbol) {
+      console.log('WebSocket already connected to', symbol)
       return
     }
 
-    console.log('Connecting to WebSocket:', this.url)
+    this.currentSymbol = symbol
+    const url = `${this.baseUrl}?symbol=${symbol}`
+    console.log('Connecting to WebSocket:', url)
     
     try {
-      this.ws = new WebSocket(this.url)
+      this.ws = new WebSocket(url)
 
       this.ws.onopen = () => {
-        console.log('✅ WebSocket connected')
+        console.log('✅ WebSocket connected to', symbol)
         useTradingStore.getState().setConnected(true)
         
         // Clear any pending reconnect
@@ -65,7 +74,7 @@ class WebSocketService {
     console.log(`Reconnecting in ${this.reconnectDelay}ms...`)
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null
-      this.connect()
+      this.connect(this.currentSymbol)
     }, this.reconnectDelay)
   }
 
@@ -85,6 +94,10 @@ class WebSocketService {
 
   isConnected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN
+  }
+
+  getCurrentSymbol(): string {
+    return this.currentSymbol
   }
 }
 
