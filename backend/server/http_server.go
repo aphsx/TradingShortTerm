@@ -6,31 +6,38 @@ import (
 	"sync"
 
 	"github.com/aphis/24hrt-backend/client"
+	"github.com/aphis/24hrt-backend/websocket"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
+	ws "github.com/gorilla/websocket"
 )
+
+type ClientInfo struct {
+	conn   *ws.Conn
+	symbol string
+}
 
 type Server struct {
 	router        *gin.Engine
-	upgrader      websocket.Upgrader
-	priceClients  map[*websocket.Conn]bool
+	upgrader      ws.Upgrader
+	priceClients  map[*ws.Conn]*ClientInfo
 	clientsMux    sync.Mutex
-	priceChan     chan PriceMessage
+	streamers     map[string]*websocket.PriceStreamer
+	streamersMux  sync.Mutex
 	tradingClient *client.TradingClient
 }
 
 type PriceMessage struct {
-	Symbol    string  `json:"symbol"`
-	Price     string  `json:"price"`
-	Timestamp int64   `json:"timestamp"`
+	Symbol    string `json:"symbol"`
+	Price     string `json:"price"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 type OrderRequest struct {
 	Symbol   string `json:"symbol" binding:"required"`
-	Side     string `json:"side" binding:"required"`   // BUY or SELL
+	Side     string `json:"side" binding:"required"`
 	Quantity string `json:"quantity" binding:"required"`
-	Type     string `json:"type"`                      // MARKET or LIMIT
+	Type     string `json:"type"`
 	Price    string `json:"price,omitempty"`
 }
 
@@ -43,15 +50,15 @@ type BalanceResponse struct {
 // NewServer creates a new HTTP server instance
 func NewServer(tradingClient *client.TradingClient) *Server {
 	gin.SetMode(gin.ReleaseMode)
-	
+
 	s := &Server{
 		router:        gin.Default(),
-		priceClients:  make(map[*websocket.Conn]bool),
-		priceChan:     make(chan PriceMessage, 100),
+		priceClients:  make(map[*ws.Conn]*ClientInfo),
+		streamers:     make(map[string]*websocket.PriceStreamer),
 		tradingClient: tradingClient,
-		upgrader: websocket.Upgrader{
+		upgrader: ws.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
-				return true // Allow all origins for local development
+				return true
 			},
 		},
 	}
@@ -63,54 +70,47 @@ func NewServer(tradingClient *client.TradingClient) *Server {
 	config.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
 	s.router.Use(cors.New(config))
 
-	// Setup routes
 	s.setupRoutes()
-
-	// Start broadcasting prices to all connected clients
-	go s.broadcastPrices()
-
 	return s
 }
 
 func (s *Server) setupRoutes() {
 	api := s.router.Group("/api")
 	{
-		// Health check
 		api.GET("/health", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"status": "ok"})
 		})
-
-		// WebSocket for real-time price updates
 		api.GET("/price", s.handlePriceWebSocket)
-
-		// Get account balance (will be implemented later)
 		api.GET("/balance", s.handleGetBalance)
-
-		// Place order (will be implemented later)
 		api.POST("/order", s.handlePlaceOrder)
-
-		// Get historical klines/candlesticks
 		api.GET("/klines", s.handleGetKlines)
 	}
 }
 
 // HandlePriceWebSocket upgrades HTTP to WebSocket for price streaming
 func (s *Server) handlePriceWebSocket(c *gin.Context) {
-	// Get symbol from query parameter, default to BTCUSDT
 	symbol := c.DefaultQuery("symbol", "BTCUSDT")
-	
+
 	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("Failed to upgrade connection: %v", err)
 		return
 	}
 
-	// Register new client
+	// Register new client with symbol info
+	clientInfo := &ClientInfo{
+		conn:   conn,
+		symbol: symbol,
+	}
+
 	s.clientsMux.Lock()
-	s.priceClients[conn] = true
+	s.priceClients[conn] = clientInfo
 	s.clientsMux.Unlock()
 
-	log.Printf("🔌 New WebSocket client connected (Total: %d)", len(s.priceClients))
+	log.Printf("🔌 New WebSocket client connected for %s (Total: %d)", symbol, len(s.priceClients))
+
+	// Start price streamer for this symbol if not already running
+	s.ensureStreamerRunning(symbol)
 
 	// Wait for client to disconnect
 	defer func() {
@@ -119,6 +119,9 @@ func (s *Server) handlePriceWebSocket(c *gin.Context) {
 		s.clientsMux.Unlock()
 		conn.Close()
 		log.Printf("🔌 Client disconnected (Remaining: %d)", len(s.priceClients))
+
+		// Check if we should stop the streamer for this symbol
+		s.checkStopStreamer(symbol)
 	}()
 
 	// Keep connection alive
@@ -130,32 +133,85 @@ func (s *Server) handlePriceWebSocket(c *gin.Context) {
 	}
 }
 
-// BroadcastPrices sends price updates to all connected WebSocket clients
-func (s *Server) broadcastPrices() {
-	for priceMsg := range s.priceChan {
-		s.clientsMux.Lock()
-		for client := range s.priceClients {
-			err := client.WriteJSON(priceMsg)
-			if err != nil {
-				log.Printf("Error sending price to client: %v", err)
-				client.Close()
-				delete(s.priceClients, client)
-			}
+// ensureStreamerRunning starts a price streamer for the symbol if not already running
+func (s *Server) ensureStreamerRunning(symbol string) {
+	s.streamersMux.Lock()
+	defer s.streamersMux.Unlock()
+
+	// Check if streamer already exists
+	if _, exists := s.streamers[symbol]; exists {
+		return
+	}
+
+	// Create and start new streamer
+	streamer := websocket.NewPriceStreamer(symbol)
+	if err := streamer.Start(); err != nil {
+		log.Printf("❌ Failed to start streamer for %s: %v", symbol, err)
+		return
+	}
+
+	s.streamers[symbol] = streamer
+	log.Printf("🚀 Started price streamer for %s", symbol)
+
+	// Handle price updates for this symbol
+	go func() {
+		for update := range streamer.GetUpdateChannel() {
+			s.broadcastPrice(update.Symbol, update.Price, update.Timestamp)
 		}
-		s.clientsMux.Unlock()
+	}()
+
+	// Handle errors
+	go func() {
+		for err := range streamer.GetErrorChannel() {
+			log.Printf("⚠️  Stream error for %s: %v", symbol, err)
+		}
+	}()
+}
+
+// checkStopStreamer stops the streamer if no clients are subscribed to it
+func (s *Server) checkStopStreamer(symbol string) {
+	s.clientsMux.Lock()
+	hasClients := false
+	for _, clientInfo := range s.priceClients {
+		if clientInfo.symbol == symbol {
+			hasClients = true
+			break
+		}
+	}
+	s.clientsMux.Unlock()
+
+	if !hasClients {
+		s.streamersMux.Lock()
+		if streamer, exists := s.streamers[symbol]; exists {
+			streamer.Stop()
+			delete(s.streamers, symbol)
+			log.Printf("🛑 Stopped price streamer for %s (no clients)", symbol)
+		}
+		s.streamersMux.Unlock()
 	}
 }
 
-// SendPrice queues a price update to be broadcast to all clients
-func (s *Server) SendPrice(symbol, price string, timestamp int64) {
-	select {
-	case s.priceChan <- PriceMessage{
+// broadcastPrice sends price update to all clients subscribed to that symbol
+func (s *Server) broadcastPrice(symbol, price string, timestamp int64) {
+	priceMsg := PriceMessage{
 		Symbol:    symbol,
 		Price:     price,
 		Timestamp: timestamp,
-	}:
-	default:
-		// Channel full, skip this update
+	}
+
+	s.clientsMux.Lock()
+	defer s.clientsMux.Unlock()
+
+	for conn, clientInfo := range s.priceClients {
+		// Only send to clients subscribed to this symbol
+		if clientInfo.symbol == symbol {
+			err := conn.WriteJSON(priceMsg)
+			if err != nil {
+				log.Printf("Error sending price to client: %v", err)
+				conn.Close()
+				delete(s.priceClients, conn)
+			}
+		}
 	}
 }
 
@@ -166,7 +222,6 @@ func (s *Server) handleGetBalance(c *gin.Context) {
 		return
 	}
 
-	// Convert to response format
 	var response []BalanceResponse
 	for _, bal := range balances {
 		response = append(response, BalanceResponse{
@@ -179,7 +234,6 @@ func (s *Server) handleGetBalance(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"balances": response})
 }
 
-// HandlePlaceOrder handles order placement requests
 func (s *Server) handlePlaceOrder(c *gin.Context) {
 	var req OrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -187,11 +241,10 @@ func (s *Server) handlePlaceOrder(c *gin.Context) {
 		return
 	}
 
-	// Place order via trading client
 	result, err := s.tradingClient.PlaceMarketOrder(req.Symbol, req.Side, req.Quantity)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
+			"error":   err.Error(),
 			"message": "Failed to place order",
 		})
 		return
@@ -208,7 +261,6 @@ func (s *Server) handlePlaceOrder(c *gin.Context) {
 	})
 }
 
-// handleGetKlines returns historical candlestick data
 func (s *Server) handleGetKlines(c *gin.Context) {
 	symbol := c.DefaultQuery("symbol", "BTCUSDT")
 	interval := c.DefaultQuery("interval", "1m")
@@ -217,7 +269,7 @@ func (s *Server) handleGetKlines(c *gin.Context) {
 	klines, err := s.tradingClient.GetKlines(symbol, interval, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
+			"error":   err.Error(),
 			"message": "Failed to fetch klines",
 		})
 		return
@@ -226,13 +278,19 @@ func (s *Server) handleGetKlines(c *gin.Context) {
 	c.JSON(http.StatusOK, klines)
 }
 
-// Start runs the HTTP server
 func (s *Server) Start(port string) error {
 	log.Printf("🚀 Starting HTTP server on :%s", port)
 	return s.router.Run(":" + port)
 }
 
-// GetPriceChannel returns the channel for sending price updates
-func (s *Server) GetPriceChannel() chan<- PriceMessage {
-	return s.priceChan
+// Cleanup stops all active streamers
+func (s *Server) Cleanup() {
+	s.streamersMux.Lock()
+	defer s.streamersMux.Unlock()
+
+	for symbol, streamer := range s.streamers {
+		streamer.Stop()
+		log.Printf("🛑 Stopped streamer for %s", symbol)
+	}
+	s.streamers = make(map[string]*websocket.PriceStreamer)
 }

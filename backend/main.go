@@ -5,19 +5,15 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/aphis/24hrt-backend/client"
 	"github.com/aphis/24hrt-backend/config"
 	"github.com/aphis/24hrt-backend/server"
-	"github.com/aphis/24hrt-backend/websocket"
 )
 
 func main() {
 	// Set log output to stdout instead of stderr
 	log.SetOutput(os.Stdout)
-	
-	log.Println("🚀 Starting 24HrT Trading Bot Backend...")
 
 	// Load configuration
 	cfg := config.Load()
@@ -61,36 +57,11 @@ func main() {
 		}
 	}()
 
-	// Start WebSocket price stream
-	priceStreamer := websocket.NewPriceStreamer(cfg.DefaultSymbol)
-	if err := priceStreamer.Start(); err != nil {
-		log.Printf("❌ Failed to start price stream: %v", err)
-		return
-	}
-	defer priceStreamer.Stop()
-
-	// Handle price updates and send to HTTP server
-	go func() {
-		for update := range priceStreamer.GetUpdateChannel() {
-			// Send price to all connected WebSocket clients (Electron)
-			httpServer.SendPrice(update.Symbol, update.Price, update.Timestamp)
-			
-			// Log occasionally for debugging (uncomment if needed)
-			// log.Printf("💰 Price Update: %s = %s", update.Symbol, update.Price)
-		}
-	}()
-
-	// Handle WebSocket errors
-	go func() {
-		for err := range priceStreamer.GetErrorChannel() {
-			log.Printf("⚠️  Stream error: %v", err)
-		}
-	}()
-
 	log.Println("✅ Backend is running!")
-	log.Printf("📊 Watching %s price updates...", cfg.DefaultSymbol)
+	log.Println("📊 Dynamic multi-symbol streaming enabled")
 	log.Println("🌐 HTTP Server: http://localhost:8080")
-	log.Println("🔌 WebSocket: ws://localhost:8080/api/price")
+	log.Println("🔌 WebSocket: ws://localhost:8080/api/price?symbol=BTCUSDT")
+	log.Println("💡 Streamers start automatically when clients connect")
 	log.Println("Press Ctrl+C to stop")
 
 	// Wait for interrupt signal
@@ -98,6 +69,9 @@ func main() {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
 
+	// Cleanup
+	log.Println("🧹 Cleaning up...")
+	httpServer.Cleanup()
+
 	log.Println("\n👋 Shutting down gracefully...")
-	time.Sleep(500 * time.Millisecond)
 }
