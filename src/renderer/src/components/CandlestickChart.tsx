@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { createChart, ColorType } from 'lightweight-charts'
+import { createChart, ColorType, SeriesType } from 'lightweight-charts'
 import { useTradingStore } from '../store/useTradingStore'
 
 export default function CandlestickChart() {
@@ -55,26 +55,21 @@ export default function CandlestickChart() {
 
       console.log('✅ Chart instance created')
 
-      // Candlestick series
-      const candleSeries = chart.addSeries({ type: 'Candlestick' } as any)
-      candleSeries.applyOptions({
+      // Candlestick series - use specific method
+      const candleSeries = chart.addCandlestickSeries({
         upColor: '#089981',
         downColor: '#f23645',
         borderUpColor: '#089981',
         borderDownColor: '#f23645',
         wickUpColor: '#089981',
         wickDownColor: '#f23645'
-      } as any)
+      })
 
-      // Volume series
-      const volumeSeries = chart.addSeries({ type: 'Histogram' } as any)
-      volumeSeries.applyOptions({
+      // Volume series - use specific method
+      const volumeSeries = chart.addHistogramSeries({
         color: '#26a69a',
-        priceFormat: {
-          type: 'volume'
-        },
         priceScaleId: ''
-      } as any)
+      })
       volumeSeries.priceScale().applyOptions({
         scaleMargins: {
           top: 0.8,
@@ -121,27 +116,48 @@ export default function CandlestickChart() {
 
   // Update chart data
   useEffect(() => {
-    if (!isChartReady || !candleSeriesRef.current || !volumeSeriesRef.current) return
+    if (!isChartReady || !candleSeriesRef.current || !volumeSeriesRef.current) {
+      console.log('⏳ Chart not ready yet', { isChartReady, hasCandleSeries: !!candleSeriesRef.current, hasVolumeSeries: !!volumeSeriesRef.current })
+      return
+    }
 
     const candleArray = getCandleArray()
-    if (candleArray.length === 0) return
+    console.log('📊 Got candle array with', candleArray.length, 'candles')
+    
+    if (candleArray.length === 0) {
+      console.warn('⚠️ No candle data available')
+      return
+    }
 
-    const candleData = candleArray.map((c: any) => ({
-      time: c.time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close
-    }))
+    try {
+      const candleData = candleArray.map((c: any) => ({
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close
+      }))
 
-    const volumeData = candleArray.map((c: any) => ({
-      time: c.time,
-      value: c.volume,
-      color: c.close >= c.open ? '#08998180' : '#f2364580'
-    }))
+      const volumeData = candleArray.map((c: any) => ({
+        time: c.time,
+        value: c.volume,
+        color: c.close >= c.open ? '#08998180' : '#f2364580'
+      }))
 
-    candleSeriesRef.current.setData(candleData)
-    volumeSeriesRef.current.setData(volumeData)
+      console.log('📈 Setting candle data:', candleData.length, 'candles')
+      candleSeriesRef.current.setData(candleData)
+      
+      console.log('📊 Setting volume data:', volumeData.length, 'volumes')
+      volumeSeriesRef.current.setData(volumeData)
+
+      // Fit content
+      if (chartRef.current) {
+        chartRef.current.timeScale().fitContent()
+        console.log('✅ Chart updated successfully')
+      }
+    } catch (error) {
+      console.error('❌ Error updating chart:', error)
+    }
   }, [candles, isChartReady, getCandleArray])
 
   return (

@@ -2,19 +2,16 @@ import { useEffect } from 'react'
 import TopBar from './TopBar'
 import SymbolSelector from './SymbolSelector'
 import ChartToolbar from './ChartToolbar'
-import CandlestickChart from './CandlestickChart'
+import TradingChart from './TradingChart'
 import TradingPanel from './TradingPanel'
 import { useTradingStore } from '../store/useTradingStore'
 
 export default function TradingViewLayout() {
-  const { loadHistoricalData, connectWebSocket, disconnectWebSocket } = useTradingStore()
+  const { connectWebSocket, disconnectWebSocket } = useTradingStore()
 
   useEffect(() => {
-    // Load initial data and connect
-    loadHistoricalData()
     connectWebSocket()
 
-    // Cleanup on unmount
     return () => {
       disconnectWebSocket()
     }
@@ -34,7 +31,7 @@ export default function TradingViewLayout() {
         <div className="flex-1 flex flex-col">
           <ChartToolbar />
           <div className="flex-1">
-            <CandlestickChart />
+            <TradingChart />
           </div>
         </div>
 
