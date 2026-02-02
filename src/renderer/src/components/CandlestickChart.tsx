@@ -120,12 +120,7 @@ export function CandlestickChart({ symbol, interval, className = '' }: Candlesti
       borderUpColor: '#089981',
       borderDownColor: '#f23645',
       wickUpColor: '#089981',
-      wickDownColor: '#f23645',
-      priceFormat: {
-        type: 'price',
-        precision: 2,
-        minMove: 0.01
-      }
+      wickDownColor: '#f23645'
     })
 
     chartRef.current = chart
