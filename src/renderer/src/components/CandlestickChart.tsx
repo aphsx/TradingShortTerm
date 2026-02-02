@@ -114,7 +114,8 @@ export function CandlestickChart({ symbol, interval, className = '' }: Candlesti
     })
 
     // Add candlestick series with exact TradingView colors
-    const candlestickSeries = chart.addCandlestickSeries({
+    const candlestickSeries = chart.addSeries({
+      type: 'Candlestick',
       upColor: '#089981', // TradingView green (teal)
       downColor: '#f23645', // TradingView red
       borderUpColor: '#089981',
