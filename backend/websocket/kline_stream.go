@@ -3,6 +3,7 @@ package websocket
 import (
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/adshao/go-binance/v2"
@@ -30,6 +31,8 @@ type KlineStreamer struct {
 	doneC        chan struct{}
 	stopC        chan struct{}
 	errC         chan error
+	buffer       *DataBuffer // Add buffering capability
+	mu           sync.Mutex  // Add mutex for thread safety
 }
 
 // NewKlineStreamer creates a new kline streamer for a given symbol and interval
@@ -44,6 +47,7 @@ func NewKlineStreamer(symbol, interval string) *KlineStreamer {
 		stopC:      make(chan struct{}),
 		errC:       make(chan error),
 		isRunning:  false,
+		buffer:     NewDataBuffer(symbol, interval), // Initialize buffer
 	}
 }
 
@@ -127,6 +131,9 @@ func (ks *KlineStreamer) connectAndListen() {
 			Volume: volume,
 		}
 		
+		// Update buffer for snapshot capability
+		ks.buffer.UpdateKline(update)
+		
 		select {
 		case ks.updateChan <- update:
 			// Only log on candle close to reduce noise
@@ -175,4 +182,23 @@ func parseFloat(s string) (float64, error) {
 	var f float64
 	_, err := fmt.Sscanf(s, "%f", &f)
 	return f, err
+}
+
+// GetBuffer returns the data buffer for snapshot access
+func (ks *KlineStreamer) GetBuffer() *DataBuffer {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+	return ks.buffer
+}
+
+// GetSnapshot returns current data snapshot for new clients
+func (ks *KlineStreamer) GetSnapshot() map[string]interface{} {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+	
+	snapshot := ks.buffer.GetSnapshot()
+	snapshot["isRunning"] = ks.isRunning
+	snapshot["clientCount"] = len(ks.updateChan) // Approximate client count
+	
+	return snapshot
 }

@@ -29,6 +29,7 @@ type Server struct {
 	klineStreamers map[string]*websocket.KlineStreamer
 	streamersMux   sync.Mutex
 	tradingClient  *client.TradingClient
+	broadcastHub   *websocket.BroadcastHub // Add enhanced broadcasting
 }
 
 type PriceMessage struct {
@@ -62,6 +63,7 @@ func NewServer(tradingClient *client.TradingClient) *Server {
 		streamers:      make(map[string]*websocket.PriceStreamer),
 		klineStreamers: make(map[string]*websocket.KlineStreamer),
 		tradingClient:  tradingClient,
+		broadcastHub:   websocket.NewBroadcastHub(), // Initialize broadcast hub
 		upgrader: ws.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true
@@ -77,6 +79,10 @@ func NewServer(tradingClient *client.TradingClient) *Server {
 	s.router.Use(cors.New(config))
 
 	s.setupRoutes()
+	
+	// Start broadcast hub
+	go s.broadcastHub.Run()
+	
 	return s
 }
 
@@ -106,6 +112,26 @@ func (s *Server) handleKline(c *gin.Context) {
 	interval := c.DefaultQuery("interval", "1m")
 	limit := c.DefaultQuery("limit", "100")
 
+	// First try to get from buffer for faster response
+	s.streamersMux.Lock()
+	if streamer, exists := s.klineStreamers[symbol+"_"+interval]; exists {
+		buffer := streamer.GetBuffer()
+		history := buffer.GetHistory(1000) // Get up to 1000 candles from buffer
+		s.streamersMux.Unlock()
+		
+		if len(history) > 0 {
+			log.Printf("📊 Serving %d candles from buffer for %s", len(history), symbol)
+			c.JSON(http.StatusOK, gin.H{
+				"data": history,
+				"source": "buffer",
+				"count": len(history),
+			})
+			return
+		}
+	}
+	s.streamersMux.Unlock()
+
+	// If no buffer data, fetch from Binance API
 	klines, err := s.tradingClient.GetKlines(symbol, interval, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -115,7 +141,12 @@ func (s *Server) handleKline(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, klines)
+	log.Printf("📊 Fetched %d klines from API for %s", len(klines), symbol)
+	c.JSON(http.StatusOK, gin.H{
+		"data": klines,
+		"source": "api",
+		"count": len(klines),
+	})
 }
 
 // HandlePriceWebSocket upgrades HTTP to WebSocket for price streaming
@@ -175,29 +206,27 @@ func (s *Server) handleKlineWebSocket(c *gin.Context) {
 		return
 	}
 
-	// Register new client with symbol and interval info
-	clientInfo := &ClientInfo{
-		conn:     conn,
-		symbol:   symbol,
-		interval: interval,
-	}
+	// Register client with broadcast hub for enhanced broadcasting
+	client := s.broadcastHub.RegisterClient(conn, symbol, interval)
 
-	s.clientsMux.Lock()
-	s.klineClients[conn] = clientInfo
-	s.clientsMux.Unlock()
-
-	log.Printf("🔌 New Kline WebSocket client connected for %s %s (Total: %d)", symbol, interval, len(s.klineClients))
+	log.Printf("🔌 New Kline WebSocket client connected for %s %s (Total: %d)", 
+		symbol, interval, s.broadcastHub.GetClientCount())
 
 	// Start kline streamer for this symbol+interval if not already running
 	s.ensureKlineStreamerRunning(symbol, interval)
 
+	// Send immediate snapshot if available
+	s.streamersMux.Lock()
+	if streamer, exists := s.klineStreamers[symbol+"_"+interval]; exists {
+		snapshot := streamer.GetSnapshot()
+		s.broadcastHub.SendSnapshot(client, snapshot)
+	}
+	s.streamersMux.Unlock()
+
 	// Wait for client to disconnect
 	defer func() {
-		s.clientsMux.Lock()
-		delete(s.klineClients, conn)
-		s.clientsMux.Unlock()
-		conn.Close()
-		log.Printf("🔌 Kline client disconnected (Remaining: %d)", len(s.klineClients))
+		s.broadcastHub.UnregisterClient(client)
+		log.Printf("🔌 Kline client disconnected (Remaining: %d)", s.broadcastHub.GetClientCount())
 
 		// Check if we should stop the streamer for this symbol+interval
 		s.checkStopKlineStreamer(symbol, interval)
@@ -237,7 +266,11 @@ func (s *Server) ensureKlineStreamerRunning(symbol, interval string) {
 	// Handle kline updates for this symbol+interval
 	go func() {
 		for update := range streamer.GetUpdateChannel() {
-			s.broadcastKline(update.Symbol, interval, update)
+			// Use enhanced broadcasting system
+			s.broadcastHub.BroadcastToSymbol(symbol, map[string]interface{}{
+				"type": "kline",
+				"data": update,
+			})
 		}
 	}()
 
@@ -251,15 +284,15 @@ func (s *Server) ensureKlineStreamerRunning(symbol, interval string) {
 
 // checkStopKlineStreamer stops the kline streamer if no clients are subscribed to it
 func (s *Server) checkStopKlineStreamer(symbol, interval string) {
-	s.clientsMux.Lock()
+	// Check if any clients are still subscribed via broadcast hub
+	targetClients := s.broadcastHub.GetClientsBySymbol(symbol)
 	hasClients := false
-	for _, clientInfo := range s.klineClients {
-		if clientInfo.symbol == symbol && clientInfo.interval == interval {
+	for _, client := range targetClients {
+		if client.Interval == interval { // Use exported field
 			hasClients = true
 			break
 		}
 	}
-	s.clientsMux.Unlock()
 
 	if !hasClients {
 		streamKey := fmt.Sprintf("%s_%s", symbol, interval)
@@ -273,22 +306,14 @@ func (s *Server) checkStopKlineStreamer(symbol, interval string) {
 	}
 }
 
-// broadcastKline sends kline update to all clients subscribed to that symbol+interval
+// broadcastKline is deprecated - use BroadcastHub instead
+// This function is kept for backward compatibility but should not be used
 func (s *Server) broadcastKline(symbol, interval string, update websocket.KlineUpdate) {
-	s.clientsMux.Lock()
-	defer s.clientsMux.Unlock()
-
-	for conn, clientInfo := range s.klineClients {
-		// Only send to clients subscribed to this symbol+interval
-		if clientInfo.symbol == symbol && clientInfo.interval == interval {
-			err := conn.WriteJSON(update)
-			if err != nil {
-				log.Printf("Error sending kline to client: %v", err)
-				conn.Close()
-				delete(s.klineClients, conn)
-			}
-		}
-	}
+	// Use enhanced broadcasting system instead
+	s.broadcastHub.BroadcastToSymbol(symbol, map[string]interface{}{
+		"type": "kline",
+		"data": update,
+	})
 }
 
 // ensureStreamerRunning starts a price streamer for the symbol if not already running
@@ -314,7 +339,15 @@ func (s *Server) ensureStreamerRunning(symbol string) {
 	// Handle price updates for this symbol
 	go func() {
 		for update := range streamer.GetUpdateChannel() {
-			s.broadcastPrice(update.Symbol, update.Price, update.Timestamp)
+			// Use enhanced broadcasting system
+			s.broadcastHub.BroadcastToSymbol(symbol, map[string]interface{}{
+				"type": "price",
+				"data": map[string]interface{}{
+					"symbol":    update.Symbol,
+					"price":     update.Price,
+					"timestamp": update.Timestamp,
+				},
+			})
 		}
 	}()
 
@@ -349,28 +382,18 @@ func (s *Server) checkStopStreamer(symbol string) {
 	}
 }
 
-// broadcastPrice sends price update to all clients subscribed to that symbol
+// broadcastPrice is deprecated - use BroadcastHub instead
+// This function is kept for backward compatibility but should not be used
 func (s *Server) broadcastPrice(symbol, price string, timestamp int64) {
-	priceMsg := PriceMessage{
-		Symbol:    symbol,
-		Price:     price,
-		Timestamp: timestamp,
-	}
-
-	s.clientsMux.Lock()
-	defer s.clientsMux.Unlock()
-
-	for conn, clientInfo := range s.priceClients {
-		// Only send to clients subscribed to this symbol
-		if clientInfo.symbol == symbol {
-			err := conn.WriteJSON(priceMsg)
-			if err != nil {
-				log.Printf("Error sending price to client: %v", err)
-				conn.Close()
-				delete(s.priceClients, conn)
-			}
-		}
-	}
+	// Use enhanced broadcasting system instead
+	s.broadcastHub.BroadcastToSymbol(symbol, map[string]interface{}{
+		"type": "price",
+		"data": map[string]interface{}{
+			"symbol":    symbol,
+			"price":     price,
+			"timestamp": timestamp,
+		},
+	})
 }
 
 func (s *Server) handleGetBalance(c *gin.Context) {
@@ -426,6 +449,11 @@ func (s *Server) Start(port string) error {
 
 // Cleanup stops all active streamers
 func (s *Server) Cleanup() {
+	// Stop broadcast hub
+	if s.broadcastHub != nil {
+		s.broadcastHub.Stop()
+	}
+
 	s.streamersMux.Lock()
 	defer s.streamersMux.Unlock()
 
