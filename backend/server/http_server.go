@@ -99,6 +99,7 @@ func (s *Server) setupRoutes() {
 		api.GET("/intervals", s.handleGetIntervals)     // New endpoint for available intervals
 		api.GET("/balance", s.handleGetBalance)
 		api.POST("/order", s.handlePlaceOrder)
+		api.GET("/orders", s.handleGetOrders)
 	}
 }
 
@@ -498,7 +499,40 @@ func (s *Server) handlePlaceOrder(c *gin.Context) {
 		return
 	}
 
-	result, err := s.tradingClient.PlaceMarketOrder(req.Symbol, req.Side, req.Quantity)
+	var result *client.OrderResult
+	var err error
+
+	// Handle different order types
+	switch req.Type {
+	case "MARKET":
+		result, err = s.tradingClient.PlaceMarketOrder(req.Symbol, req.Side, req.Quantity)
+	case "LIMIT":
+		if req.Price == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Price is required for limit orders",
+				"message": "Missing price parameter",
+			})
+			return
+		}
+		if req.Side == "BUY" {
+			result, err = s.tradingClient.PlaceLimitBuyOrder(req.Symbol, req.Quantity, req.Price)
+		} else if req.Side == "SELL" {
+			result, err = s.tradingClient.PlaceLimitSellOrder(req.Symbol, req.Quantity, req.Price)
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":   "Invalid order side",
+				"message": "Side must be BUY or SELL",
+			})
+			return
+		}
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid order type",
+			"message": "Type must be MARKET or LIMIT",
+		})
+		return
+	}
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   err.Error(),
@@ -512,9 +546,29 @@ func (s *Server) handlePlaceOrder(c *gin.Context) {
 		"orderId":  result.OrderID,
 		"symbol":   result.Symbol,
 		"side":     result.Side,
+		"type":     result.Type,
 		"status":   result.Status,
 		"quantity": result.Quantity,
 		"price":    result.Price,
+	})
+}
+
+func (s *Server) handleGetOrders(c *gin.Context) {
+	symbol := c.DefaultQuery("symbol", "BTCUSDT")
+	
+	orders, err := s.tradingClient.GetOpenOrders(symbol)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   err.Error(),
+			"message": "Failed to fetch orders",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"orders": orders,
+		"count":  len(orders),
+		"symbol": symbol,
 	})
 }
 
