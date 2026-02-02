@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { createChart, IChartApi, ISeriesApi, CandlestickData, Time } from 'lightweight-charts'
+import { createChart, IChartApi, ISeriesApi, Time } from 'lightweight-charts'
 import { useTradingStore } from '../store/trading'
 
 export function TradingChart(): JSX.Element {
@@ -7,16 +7,17 @@ export function TradingChart(): JSX.Element {
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Line'> | null>(null)
   
-  const currentPrice = useTradingStore((state) => state.currentPrice)
+  // Use selectors to prevent unnecessary re-renders
   const isConnected = useTradingStore((state) => state.isConnected)
+  const currentPrice = useTradingStore((state) => state.currentPrice)
 
-  // Initialize chart
+  // Initialize chart once
   useEffect(() => {
     if (!chartContainerRef.current) return
 
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
-      height: 400,
+      height: 500,
       layout: {
         background: { color: '#1e1e1e' },
         textColor: '#d1d4dc'
@@ -25,7 +26,14 @@ export function TradingChart(): JSX.Element {
         vertLines: { color: '#2b2b2b' },
         horzLines: { color: '#2b2b2b' }
       },
+      crosshair: {
+        mode: 1
+      },
+      rightPriceScale: {
+        borderColor: '#2b2b2b'
+      },
       timeScale: {
+        borderColor: '#2b2b2b',
         timeVisible: true,
         secondsVisible: false
       }
@@ -33,7 +41,11 @@ export function TradingChart(): JSX.Element {
 
     const lineSeries = chart.addLineSeries({
       color: '#2962FF',
-      lineWidth: 2
+      lineWidth: 2,
+      crosshairMarkerVisible: true,
+      crosshairMarkerRadius: 4,
+      lastValueVisible: true,
+      priceLineVisible: true
     })
 
     chartRef.current = chart
@@ -56,7 +68,7 @@ export function TradingChart(): JSX.Element {
     }
   }, [])
 
-  // Update chart with new price data
+  // Update chart with new price data - NO RE-RENDER on every tick
   useEffect(() => {
     if (!seriesRef.current || !currentPrice) return
 
@@ -65,6 +77,7 @@ export function TradingChart(): JSX.Element {
       value: parseFloat(currentPrice.price)
     }
 
+    // Direct update to chart, no React re-render
     seriesRef.current.update(dataPoint)
   }, [currentPrice])
 

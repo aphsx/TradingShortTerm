@@ -180,22 +180,43 @@ func (tc *TradingClient) CancelOrder(symbol string, orderID int64) error {
 	return nil
 }
 
+// BalanceInfo represents account balance information
+type BalanceInfo struct {
+	Asset  string
+	Free   string
+	Locked string
+}
+
 // GetAccountBalance retrieves account balance information
-func (tc *TradingClient) GetAccountBalance() (map[string]string, error) {
+func (tc *TradingClient) GetAccountBalance() ([]BalanceInfo, error) {
 	account, err := tc.client.NewGetAccountService().Do(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get account info: %w", err)
 	}
 
-	balances := make(map[string]string)
+	var balances []BalanceInfo
 	for _, balance := range account.Balances {
 		if balance.Free != "0" || balance.Locked != "0" {
-			balances[balance.Asset] = balance.Free
+			balances = append(balances, BalanceInfo{
+				Asset:  balance.Asset,
+				Free:   balance.Free,
+				Locked: balance.Locked,
+			})
 			log.Printf("💼 %s: %s (Free), %s (Locked)", balance.Asset, balance.Free, balance.Locked)
 		}
 	}
 
 	return balances, nil
+}
+
+// PlaceMarketOrder places a market order (buy or sell)
+func (tc *TradingClient) PlaceMarketOrder(symbol, side, quantity string) (*OrderResult, error) {
+	if side == "BUY" {
+		return tc.PlaceMarketBuyOrder(symbol, quantity)
+	} else if side == "SELL" {
+		return tc.PlaceMarketSellOrder(symbol, quantity)
+	}
+	return nil, fmt.Errorf("invalid order side: %s", side)
 }
 
 // GetOpenOrders retrieves all open orders for a symbol

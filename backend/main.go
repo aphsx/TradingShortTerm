@@ -51,8 +51,8 @@ func main() {
 		}
 	}
 
-	// Create HTTP server for Electron communication
-	httpServer := server.NewServer()
+	// Create HTTP server for Electron communication with trading client
+	httpServer := server.NewServer(tradingClient)
 
 	// Start HTTP server in a goroutine
 	go func() {

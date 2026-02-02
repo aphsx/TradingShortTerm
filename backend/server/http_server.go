@@ -5,17 +5,19 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/aphis/24hrt-backend/client"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
 type Server struct {
-	router       *gin.Engine
-	upgrader     websocket.Upgrader
-	priceClients map[*websocket.Conn]bool
-	clientsMux   sync.Mutex
-	priceChan    chan PriceMessage
+	router        *gin.Engine
+	upgrader      websocket.Upgrader
+	priceClients  map[*websocket.Conn]bool
+	clientsMux    sync.Mutex
+	priceChan     chan PriceMessage
+	tradingClient *client.TradingClient
 }
 
 type PriceMessage struct {
@@ -39,13 +41,14 @@ type BalanceResponse struct {
 }
 
 // NewServer creates a new HTTP server instance
-func NewServer() *Server {
+func NewServer(tradingClient *client.TradingClient) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	
 	s := &Server{
-		router:       gin.Default(),
-		priceClients: make(map[*websocket.Conn]bool),
-		priceChan:    make(chan PriceMessage, 100),
+		router:        gin.Default(),
+		priceClients:  make(map[*websocket.Conn]bool),
+		priceChan:     make(chan PriceMessage, 100),
+		tradingClient: tradingClient,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true // Allow all origins for local development
@@ -150,15 +153,27 @@ func (s *Server) SendPrice(symbol, price string, timestamp int64) {
 	}
 }
 
-// HandleGetBalance returns the account balance (placeholder)
 func (s *Server) handleGetBalance(c *gin.Context) {
-	// This will be connected to the trading client
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Balance endpoint - will be implemented",
-	})
+	balances, err := s.tradingClient.GetAccountBalance()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Convert to response format
+	var response []BalanceResponse
+	for _, bal := range balances {
+		response = append(response, BalanceResponse{
+			Asset:  bal.Asset,
+			Free:   bal.Free,
+			Locked: bal.Locked,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"balances": response})
 }
 
-// HandlePlaceOrder handles order placement requests (placeholder)
+// HandlePlaceOrder handles order placement requests
 func (s *Server) handlePlaceOrder(c *gin.Context) {
 	var req OrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -166,10 +181,24 @@ func (s *Server) handlePlaceOrder(c *gin.Context) {
 		return
 	}
 
-	// This will be connected to the trading client
+	// Place order via trading client
+	result, err := s.tradingClient.PlaceMarketOrder(req.Symbol, req.Side, req.Quantity)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+			"message": "Failed to place order",
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Order placement endpoint - will be implemented",
-		"order":   req,
+		"message":  "Order placed successfully",
+		"orderId":  result.OrderID,
+		"symbol":   result.Symbol,
+		"side":     result.Side,
+		"status":   result.Status,
+		"quantity": result.Quantity,
+		"price":    result.Price,
 	})
 }
 
