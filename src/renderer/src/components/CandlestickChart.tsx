@@ -111,16 +111,16 @@ export default function CandlestickChart() {
             labelBackgroundColor: '#131722'
           }
         },
+        handleScale: {
+          axisPressedMouseMove: true,
+          mouseWheel: true,
+          pinch: true
+        },
         handleScroll: {
           mouseWheel: true,
           pressedMouseMove: true,
           horzTouchDrag: true,
           vertTouchDrag: true
-        },
-        handleScale: {
-          axisPressedMouseMove: true,
-          mouseWheel: true,
-          pinch: true
         }
       })
 
@@ -195,11 +195,29 @@ export default function CandlestickChart() {
         }
       }
 
+      // Track mouse wheel events for user interaction
+      const handleWheel = (e: WheelEvent) => {
+        if (e.ctrlKey || e.metaKey) {
+          setUserInteracted(true) // User is zooming with mouse wheel
+        }
+      }
+
+      // Track mouse events for user interaction
+      const handleMouseDown = () => {
+        setUserInteracted(true) // User is clicking/panning
+      }
+
       const resizeObserver = new ResizeObserver(handleResize)
       resizeObserver.observe(chartContainerRef.current)
+      
+      // Add event listeners to track user interaction
+      container.addEventListener('wheel', handleWheel)
+      container.addEventListener('mousedown', handleMouseDown)
 
       return () => {
         resizeObserver.disconnect()
+        container.removeEventListener('wheel', handleWheel)
+        container.removeEventListener('mousedown', handleMouseDown)
         if (chartRef.current) {
           chartRef.current.remove()
           chartRef.current = null
@@ -244,6 +262,9 @@ export default function CandlestickChart() {
       return itemTime >= cutoffTime
     })
   }, [selectedRange])
+
+  // Debounced update to prevent excessive re-renders
+  const debouncedUpdateData = useRef<NodeJS.Timeout | null>(null)
 
   // Handle crosshair move for tooltip
   const handleCrosshairMove = useCallback((param: MouseEventParams<Time>) => {
@@ -329,76 +350,89 @@ export default function CandlestickChart() {
     }
   }, [currentPrice, getCandleArray])
 
-  // Update chart data
+  // Update chart data with debouncing
   useEffect(() => {
     if (!isChartReady || !mainSeries || !volumeSeriesRef.current) return
 
     const candleArray = getCandleArray()
     if (candleArray.length === 0) return
 
-    try {
-      // Filter data based on selected range
-      const filteredData = filterDataByRange(candleArray)
-      
-      // Prepare data based on chart type
-      let chartData: any[] = []
-      
-      switch (chartType) {
-        case 'line':
-          chartData = filteredData.map((c) => ({
-            time: c.time,
-            value: c.close
-          }))
-          break
-        case 'area':
-          chartData = filteredData.map((c) => ({
-            time: c.time,
-            value: c.close
-          }))
-          break
-        default:
-          chartData = filteredData.map((c) => ({
-            time: c.time,
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close
-          }))
-      }
+    // Clear existing timeout
+    if (debouncedUpdateData.current) {
+      clearTimeout(debouncedUpdateData.current)
+    }
 
-      const volumeData = filteredData.map((c) => ({
-        time: c.time,
-        value: c.volume,
-        color: c.close >= c.open ? '#26a69a80' : '#ef535080'
-      }))
-
-      mainSeries.setData(chartData)
-      volumeSeriesRef.current.setData(volumeData)
-
-      // Update price info
-      if (chartData.length > 0) {
-        const lastItem = chartData[chartData.length - 1]
-        const firstItem = chartData[0]
-        const lastPrice = 'close' in lastItem ? lastItem.close : lastItem.value
-        const firstPrice = 'open' in firstItem ? firstItem.open : firstItem.value
+    // Debounce the update to prevent excessive re-renders
+    debouncedUpdateData.current = setTimeout(() => {
+      try {
+        // Filter data based on selected range
+        const filteredData = filterDataByRange(candleArray)
         
-        setLastPrice(lastPrice)
-        const change = lastPrice - firstPrice
-        const changePercent = ((change / firstPrice) * 100)
-        setPriceChange(change)
-        setPriceChangePercent(changePercent)
-      }
+        // Prepare data based on chart type
+        let chartData: any[] = []
+        
+        switch (chartType) {
+          case 'line':
+            chartData = filteredData.map((c) => ({
+              time: c.time,
+              value: c.close
+            }))
+            break
+          case 'area':
+            chartData = filteredData.map((c) => ({
+              time: c.time,
+              value: c.close
+            }))
+            break
+          default:
+            chartData = filteredData.map((c) => ({
+              time: c.time,
+              open: c.open,
+              high: c.high,
+              low: c.low,
+              close: c.close
+            }))
+        }
 
-      if (chartRef.current) {
-        // Only fit content if user hasn't manually interacted (zoomed/panned)
-        if (!userInteracted) {
+        const volumeData = filteredData.map((c) => ({
+          time: c.time,
+          value: c.volume,
+          color: c.close >= c.open ? '#26a69a80' : '#ef535080'
+        }))
+
+        mainSeries.setData(chartData)
+        if (volumeSeriesRef.current) {
+          volumeSeriesRef.current.setData(volumeData)
+        }
+
+        // Update price info
+        if (chartData.length > 0) {
+          const lastItem = chartData[chartData.length - 1]
+          const firstItem = chartData[0]
+          const lastPrice = 'close' in lastItem ? lastItem.close : lastItem.value
+          const firstPrice = 'open' in firstItem ? firstItem.open : firstItem.value
+          
+          setLastPrice(lastPrice)
+          const change = lastPrice - firstPrice
+          const changePercent = ((change / firstPrice) * 100)
+          setPriceChange(change)
+          setPriceChangePercent(changePercent)
+        }
+
+        if (chartRef.current && !userInteracted) {
           chartRef.current.timeScale().fitContent()
         }
+      } catch (error) {
+        console.error('Error updating chart:', error)
       }
-    } catch (error) {
-      console.error('Error updating chart:', error)
+    }, 100) // 100ms debounce
+
+    return () => {
+      if (debouncedUpdateData.current) {
+        clearTimeout(debouncedUpdateData.current)
+      }
     }
-  }, [candles, isChartReady, getCandleArray, chartType, filterDataByRange, mainSeries])
+  }, [candles, isChartReady, getCandleArray, chartType, selectedRange, mainSeries, userInteracted])
 
   const handleZoomIn = () => {
     if (chartRef.current) {
