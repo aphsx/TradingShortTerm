@@ -31,7 +31,16 @@ function startBackend(): void {
   })
 
   backendProcess.stderr?.on('data', (data) => {
-    console.error(`[Backend Error] ${data.toString().trim()}`)
+    // Go's log.Printf writes to stderr by default, not an error
+    const output = data.toString().trim()
+    // Only show actual errors (messages containing "error", "failed", "panic")
+    if (output.toLowerCase().includes('error') || 
+        output.toLowerCase().includes('failed') || 
+        output.toLowerCase().includes('panic')) {
+      console.error(`[Backend Error] ${output}`)
+    } else {
+      console.log(`[Backend] ${output}`)
+    }
   })
 
   backendProcess.on('close', (code) => {

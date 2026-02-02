@@ -14,6 +14,9 @@ import (
 )
 
 func main() {
+	// Set log output to stdout instead of stderr
+	log.SetOutput(os.Stdout)
+	
 	log.Println("🚀 Starting 24HrT Trading Bot Backend...")
 
 	// Load configuration
