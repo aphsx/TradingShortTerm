@@ -6,7 +6,9 @@ import {
   IChartApi,
   ISeriesApi,
   CandlestickData as LWCCandlestickData,
-  Time
+  Time,
+  CandlestickSeries,
+  HistogramSeries
 } from 'lightweight-charts'
 import { useTradingStore } from '../store/useTradingStore'
 import { 
@@ -111,7 +113,7 @@ export default function CandlestickChart() {
       })
 
       // Candlestick series
-      const candleSeries = chart.addCandlestickSeries({
+      const candleSeries = chart.addSeries(CandlestickSeries, {
         upColor: '#26a69a',
         downColor: '#ef5350',
         borderVisible: false,
@@ -120,7 +122,7 @@ export default function CandlestickChart() {
       })
 
       // Volume series
-      const volumeSeries = chart.addHistogramSeries({
+      const volumeSeries = chart.addSeries(HistogramSeries, {
         color: '#26a69a',
         priceFormat: {
           type: 'volume'
