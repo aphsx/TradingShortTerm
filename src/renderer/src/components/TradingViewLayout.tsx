@@ -26,7 +26,7 @@ export default function TradingViewLayout() {
   return (
     <div className="h-screen w-full flex flex-col bg-[#131722] overflow-hidden">
       {/* Navigation Bar */}
-      <div className="bg-[#1E222D] border-b border-[#2B2B43] px-4 py-2">
+      <div className="bg-[#1E222D] border-b border-[#2B2B43] px-4 py-2 flex-shrink-0">
         <div className="flex items-center gap-2">
           <button
             onClick={() => setCurrentView('trading')}
@@ -57,26 +57,34 @@ export default function TradingViewLayout() {
       {currentView === 'trading' ? (
         <>
           {/* Top Bar */}
-          <TopBar />
+          <div className="flex-shrink-0">
+            <TopBar />
+          </div>
 
           {/* Main Content */}
-          <div className="flex-1 flex overflow-hidden">
-            {/* Left: Watchlist */}
-            <WatchlistPanel />
+          <div className="flex-1 flex overflow-hidden min-h-0">
+            {/* Left: Watchlist - Fixed width */}
+            <div className="w-72 flex-shrink-0">
+              <WatchlistPanel />
+            </div>
 
-            {/* Center: Chart Area */}
-            <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Chart */}
-              <div className="flex-1 overflow-hidden">
+            {/* Center: Chart Area - Takes remaining space */}
+            <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+              {/* Chart - Takes most of the space */}
+              <div className="flex-1 overflow-hidden min-h-0">
                 <CandlestickChart />
               </div>
 
-              {/* Bottom Panel */}
-              <BottomPanel />
+              {/* Bottom Panel - Fixed height */}
+              <div className="h-64 flex-shrink-0">
+                <BottomPanel />
+              </div>
             </div>
 
-            {/* Right: Trading Panel */}
-            <TradingPanel />
+            {/* Right: Trading Panel - Fixed width */}
+            <div className="w-80 flex-shrink-0">
+              <TradingPanel />
+            </div>
           </div>
         </>
       ) : (

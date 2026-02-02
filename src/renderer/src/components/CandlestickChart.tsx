@@ -551,18 +551,18 @@ export default function CandlestickChart() {
   }
 
   return (
-    <div className="relative w-full h-full bg-[#131722] flex flex-col">
+    <div className="relative w-full h-full bg-[#131722] flex flex-col overflow-hidden">
       {/* Chart Header - TradingView Style */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-[#2B2B43]">
-        <div className="flex items-center gap-6">
+      <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-[#2B2B43] min-h-[60px]">
+        <div className="flex items-center gap-4 overflow-x-auto scrollbar-hide">
           {/* Symbol Info */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <span className="text-white font-semibold text-lg">{symbol}</span>
             <span className="text-gray-500 text-sm">{interval}</span>
           </div>
 
           {/* Price Info */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 flex-shrink-0">
             <div className="flex items-center gap-2">
               <span className={`text-xl font-bold ${getTrendColor()}`}>
                 ${lastPrice.toFixed(2)}
@@ -581,12 +581,12 @@ export default function CandlestickChart() {
           </div>
 
           {/* Time Range Selector */}
-          <div className="flex items-center gap-1 bg-[#1E222D] rounded p-1">
+          <div className="flex items-center gap-1 bg-[#1E222D] rounded p-1 flex-shrink-0">
             {(['1D', '1W', '1M', '1Y', 'ALL'] as const).map((range) => (
               <button
                 key={range}
                 onClick={() => handleRangeChange(range)}
-                className={`px-3 py-1 text-sm rounded transition-colors ${
+                className={`px-3 py-1 text-sm rounded transition-colors whitespace-nowrap ${
                   selectedRange === range
                     ? 'bg-[#2962FF] text-white'
                     : 'text-gray-400 hover:text-white hover:bg-[#2B2B43]'
@@ -599,7 +599,7 @@ export default function CandlestickChart() {
           </div>
 
           {/* Chart Type Selector */}
-          <div className="flex items-center gap-1 bg-[#1E222D] rounded p-1">
+          <div className="flex items-center gap-1 bg-[#1E222D] rounded p-1 flex-shrink-0">
             <button
               onClick={() => handleChartTypeChange('candlestick')}
               className={`p-1.5 rounded transition-colors ${
@@ -637,7 +637,7 @@ export default function CandlestickChart() {
         </div>
 
         {/* Chart Controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           <button
             onClick={handleScrollLeft}
             className="p-1.5 hover:bg-[#2B2B43] rounded transition-colors"
@@ -731,8 +731,8 @@ export default function CandlestickChart() {
         </div>
       </div>
 
-      {/* Chart Container */}
-      <div className="flex-1 relative">
+      {/* Chart Container - Takes remaining space */}
+      <div className="flex-1 relative overflow-hidden min-h-0">
         {isLoadingHistory && (
           <div className="absolute inset-0 flex items-center justify-center bg-[#131722] bg-opacity-90 z-10">
             <div className="text-center">
@@ -759,12 +759,12 @@ export default function CandlestickChart() {
       </div>
 
       {/* TradingView Attribution */}
-      <div className="absolute bottom-2 left-2 text-[10px] text-gray-600 z-10">
+      <div className="absolute bottom-2 left-2 text-[10px] text-gray-600 z-10 pointer-events-none">
         <a 
           href="https://www.tradingview.com" 
           target="_blank" 
           rel="noopener noreferrer"
-          className="hover:text-gray-400 transition-colors"
+          className="hover:text-gray-400 transition-colors pointer-events-auto"
         >
           Chart by TradingView
         </a>

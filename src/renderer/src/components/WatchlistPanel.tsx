@@ -58,9 +58,9 @@ export default function WatchlistPanel() {
   }
 
   return (
-    <div className="w-64 bg-[#1E222D] border-r border-[#2B2B43] flex flex-col">
+    <div className="w-72 bg-[#1E222D] border-r border-[#2B2B43] flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="px-3 py-2 border-b border-[#2B2B43]">
+      <div className="px-3 py-2 border-b border-[#2B2B43] flex-shrink-0">
         <h3 className="text-white text-sm font-semibold mb-2">Watchlist</h3>
         <div className="relative">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500" />
@@ -77,7 +77,7 @@ export default function WatchlistPanel() {
       </div>
 
       {/* Symbols List */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto scrollbar-hide">
         {filteredSymbols.map((item) => (
           <div
             key={item.symbol}

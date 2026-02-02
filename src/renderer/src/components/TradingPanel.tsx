@@ -55,9 +55,9 @@ export default function TradingPanel() {
   }
 
   return (
-    <div className="w-80 bg-[#1E222D] border-l border-[#2B2B43] flex flex-col">
+    <div className="w-80 bg-[#1E222D] border-l border-[#2B2B43] flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-[#2B2B43]">
+      <div className="px-4 py-3 border-b border-[#2B2B43] flex-shrink-0">
         <h3 className="text-white text-sm font-semibold flex items-center gap-2">
           <ArrowUpDown className="w-4 h-4" />
           Spot Trading
@@ -65,7 +65,7 @@ export default function TradingPanel() {
       </div>
 
       {/* Order Type Toggle */}
-      <div className="px-4 py-3 border-b border-[#2B2B43]">
+      <div className="px-4 py-3 border-b border-[#2B2B43] flex-shrink-0">
         <div className="flex gap-2 bg-[#131722] rounded p-1">
           <button
             onClick={() => setOrderType('limit')}
@@ -91,7 +91,7 @@ export default function TradingPanel() {
       </div>
 
       {/* Balance */}
-      <div className="px-4 py-2 border-b border-[#2B2B43]">
+      <div className="px-4 py-2 border-b border-[#2B2B43] flex-shrink-0">
         <div className="flex justify-between text-xs">
           <span className="text-gray-400">Available</span>
           <span className="text-white font-medium">10,000.00 USDT</span>
@@ -99,7 +99,7 @@ export default function TradingPanel() {
       </div>
 
       {/* Order Form */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+      <div className="flex-1 overflow-y-auto scrollbar-hide px-4 py-3 space-y-3">
         {/* Price Input */}
         {orderType === 'limit' && (
           <div>
