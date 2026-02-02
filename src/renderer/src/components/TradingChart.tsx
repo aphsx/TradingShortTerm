@@ -13,58 +13,76 @@ export function TradingChart(): JSX.Element {
 
   // Initialize chart once
   useEffect(() => {
-    if (!chartContainerRef.current) return
-
-    const chart = createChart(chartContainerRef.current, {
-      width: chartContainerRef.current.clientWidth,
-      height: 500,
-      layout: {
-        background: { color: '#1e1e1e' },
-        textColor: '#d1d4dc'
-      },
-      grid: {
-        vertLines: { color: '#2b2b2b' },
-        horzLines: { color: '#2b2b2b' }
-      },
-      crosshair: {
-        mode: 1
-      },
-      rightPriceScale: {
-        borderColor: '#2b2b2b'
-      },
-      timeScale: {
-        borderColor: '#2b2b2b',
-        timeVisible: true,
-        secondsVisible: false
-      }
-    })
-
-    const lineSeries = chart.addLineSeries({
-      color: '#2962FF',
-      lineWidth: 2,
-      crosshairMarkerVisible: true,
-      crosshairMarkerRadius: 4,
-      lastValueVisible: true,
-      priceLineVisible: true
-    })
-
-    chartRef.current = chart
-    seriesRef.current = lineSeries
-
-    // Handle window resize
-    const handleResize = (): void => {
-      if (chartContainerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({
-          width: chartContainerRef.current.clientWidth
-        })
-      }
+    if (!chartContainerRef.current) {
+      console.warn('Chart container not ready')
+      return
     }
 
-    window.addEventListener('resize', handleResize)
+    try {
+      const container = chartContainerRef.current
+      const width = container.clientWidth
+      const height = container.clientHeight || 500
 
-    return () => {
-      window.removeEventListener('resize', handleResize)
-      chart.remove()
+      console.log('Creating chart with dimensions:', { width, height })
+
+      const chart = createChart(container, {
+        width: width,
+        height: height,
+        layout: {
+          background: { color: '#1e1e1e' },
+          textColor: '#d1d4dc'
+        },
+        grid: {
+          vertLines: { color: '#2b2b2b' },
+          horzLines: { color: '#2b2b2b' }
+        },
+        crosshair: {
+          mode: 1
+        },
+        rightPriceScale: {
+          borderColor: '#2b2b2b'
+        },
+        timeScale: {
+          borderColor: '#2b2b2b',
+          timeVisible: true,
+          secondsVisible: false
+        }
+      })
+
+      if (!chart) {
+        console.error('Failed to create chart')
+        return
+      }
+
+      const lineSeries = chart.addLineSeries({
+        color: '#2962FF',
+        lineWidth: 2,
+        crosshairMarkerVisible: true,
+        crosshairMarkerRadius: 4,
+        lastValueVisible: true,
+        priceLineVisible: true
+      })
+
+      chartRef.current = chart
+      seriesRef.current = lineSeries
+
+      // Handle window resize
+      const handleResize = (): void => {
+        if (chartContainerRef.current && chartRef.current) {
+          chartRef.current.applyOptions({
+            width: chartContainerRef.current.clientWidth
+          })
+        }
+      }
+
+      window.addEventListener('resize', handleResize)
+
+      return () => {
+        window.removeEventListener('resize', handleResize)
+        chart.remove()
+      }
+    } catch (error) {
+      console.error('Error initializing chart:', error)
     }
   }, [])
 
