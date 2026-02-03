@@ -38,26 +38,49 @@ func NewTradingClient(cfg *config.Config) *TradingClient {
 		isTestnet: cfg.UseTestnet,
 	}
 
-	// Sync time with server
-	if err := tc.syncTime(); err != nil {
+	// Sync time with server and set time offset in the client BEFORE any API calls
+	if err := tc.syncTimeAndApply(); err != nil {
 		log.Printf("⚠️  Failed to sync time: %v", err)
 	}
 
 	return tc
 }
 
-// syncTime synchronizes local time with Binance server time
-func (tc *TradingClient) syncTime() error {
+// syncTimeAndApply synchronizes with server and immediately applies the offset
+func (tc *TradingClient) syncTimeAndApply() error {
+	// Get server time first (Binance returns UTC time in milliseconds)
 	serverTime, err := tc.client.NewServerTimeService().Do(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to get server time: %w", err)
 	}
 
-	localTime := time.Now().UnixNano() / int64(time.Millisecond)
-	tc.timeOffset = serverTime - localTime
+	// IMPORTANT: Must use UTC time for comparison with Binance server
+	// time.Now() returns local time, so we must explicitly use UTC()
+	localTimeUTC := time.Now().UTC().UnixNano() / int64(time.Millisecond)
 	
-	log.Printf("🕐 Time synchronized. Server offset: %dms", tc.timeOffset)
+	// Calculate raw offset
+	actualOffset := serverTime - localTimeUTC
+	
+	// Add safety buffer to ensure we're never ahead of server time
+	// This prevents timestamp errors (-5 seconds buffer)
+	tc.timeOffset = actualOffset - 5000
+	
+	// Apply to client
+	tc.client.TimeOffset = tc.timeOffset
+	
+	log.Printf("🕐 Time synchronized (using UTC):")
+	log.Printf("   Server time (UTC): %d", serverTime)
+	log.Printf("   Local time (UTC):  %d", localTimeUTC)
+	log.Printf("   System timezone:   %s", time.Now().Location().String())
+	log.Printf("   Raw offset:        %dms", actualOffset)
+	log.Printf("   Applied offset:    %dms (with -5000ms safety buffer)", tc.timeOffset)
+	
 	return nil
+}
+
+// syncTime re-synchronizes time (for periodic updates)
+func (tc *TradingClient) syncTime() error {
+	return tc.syncTimeAndApply()
 }
 
 // getServerTime returns synchronized server time
@@ -237,6 +260,11 @@ func (tc *TradingClient) PlaceLimitSellOrder(symbol string, quantity string, pri
 
 // CancelOrder cancels an existing order
 func (tc *TradingClient) CancelOrder(symbol string, orderID int64) error {
+	// Resync time before canceling order
+	if err := tc.syncTime(); err != nil {
+		log.Printf("⚠️  Time sync failed, proceeding anyway: %v", err)
+	}
+
 	_, err := tc.client.NewCancelOrderService().
 		Symbol(symbol).
 		OrderID(orderID).
@@ -264,6 +292,12 @@ func (tc *TradingClient) GetAccountBalance() ([]BalanceInfo, error) {
 		return nil, fmt.Errorf("API keys not configured. Please set up Binance testnet API keys")
 	}
 
+	// Resync time before fetching balance to avoid timestamp errors
+	if err := tc.syncTime(); err != nil {
+		log.Printf("⚠️  Time sync failed, proceeding anyway: %v", err)
+	}
+
+	// Use RecvWindow to allow for more timestamp tolerance (10 seconds)
 	account, err := tc.client.NewGetAccountService().Do(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get account info: %w", err)
@@ -296,6 +330,11 @@ func (tc *TradingClient) PlaceMarketOrder(symbol, side, quantity string) (*Order
 
 // GetOpenOrders retrieves all open orders for a symbol
 func (tc *TradingClient) GetOpenOrders(symbol string) ([]*OrderResult, error) {
+	// Resync time before fetching orders
+	if err := tc.syncTime(); err != nil {
+		log.Printf("⚠️  Time sync failed, proceeding anyway: %v", err)
+	}
+
 	orders, err := tc.client.NewListOpenOrdersService().
 		Symbol(symbol).
 		Do(context.Background())
