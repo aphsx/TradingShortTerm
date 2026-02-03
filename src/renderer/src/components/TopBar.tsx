@@ -5,7 +5,7 @@ import { getAssetBySymbol } from '../config/assets'
 // Import crypto icons for common symbols
 import btcIcon from 'cryptocurrency-icons/svg/color/btc.svg'
 import ethIcon from 'cryptocurrency-icons/svg/color/eth.svg'
-import paxgIcon from 'cryptocurrency-icons/svg/color/paxg.svg'
+import genericIcon from 'cryptocurrency-icons/svg/color/generic.svg'
 
 // Create a simple icon component for SVG
 const CryptoIcon = ({ icon, symbol, size = 20 }: { icon: string; symbol: string; size?: number }) => (
@@ -54,7 +54,7 @@ export default function TopBar() {
     // Fallback to specific icons
     if (symbol.includes('BTC')) return <CryptoIcon icon={btcIcon} symbol="BTC" size={20} />
     if (symbol.includes('ETH')) return <CryptoIcon icon={ethIcon} symbol="ETH" size={20} />
-    if (symbol.includes('GOLD') || symbol.includes('XAU') || symbol.includes('PAXG')) return <CryptoIcon icon={paxgIcon} symbol="GOLD" size={20} />
+    if (symbol.includes('GOLD') || symbol.includes('XAU') || symbol.includes('PAXG')) return <CryptoIcon icon={genericIcon} symbol="GOLD" size={20} />
     
     // Default fallback
     return <BarChart3 className="w-5 h-5 text-gray-400" />

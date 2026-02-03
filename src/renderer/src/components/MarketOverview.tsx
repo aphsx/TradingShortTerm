@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useTradingStore } from '../store/useTradingStore'
+import { getAssetBySymbol } from '../config/assets'
 import { 
   TrendingUp, 
   Star, 
@@ -17,6 +18,25 @@ import {
   Gem,
   Coins
 } from 'lucide-react'
+
+// Import crypto icons
+import btcIcon from 'cryptocurrency-icons/svg/color/btc.svg'
+import ethIcon from 'cryptocurrency-icons/svg/color/eth.svg'
+import bnbIcon from 'cryptocurrency-icons/svg/color/bnb.svg'
+import solIcon from 'cryptocurrency-icons/svg/color/sol.svg'
+import xrpIcon from 'cryptocurrency-icons/svg/color/xrp.svg'
+import adaIcon from 'cryptocurrency-icons/svg/color/ada.svg'
+import genericIcon from 'cryptocurrency-icons/svg/color/generic.svg'
+
+// Create a simple icon component for SVG
+const CryptoIcon = ({ icon, symbol, size = 20 }: { icon: string; symbol: string; size?: number }) => (
+  <img 
+    src={icon} 
+    alt={symbol}
+    style={{ width: size, height: size }}
+    className="rounded-full"
+  />
+)
 
 interface MarketData {
   symbol: string
@@ -65,10 +85,32 @@ const MARKET_DATA: MarketData[] = [
 ]
 
 export default function MarketOverview() {
-  const { setSymbol } = useTradingStore()
+  const { symbol: currentSymbol, setSymbol } = useTradingStore()
   const [searchQuery, setSearchQuery] = useState('')
-  const [selectedCategory, setSelectedCategory] = useState<string>('all')
+  const [selectedCategory, setSelectedCategory] = useState('all')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+
+  // Helper function to get crypto icon
+  const getSymbolIcon = (symbol: string, size = 20) => {
+    // Extract base asset from symbol (e.g., BTC from BTCUSDT)
+    const baseAsset = symbol.replace(/USDT|BUSD|USDC/, '')
+    const asset = getAssetBySymbol(baseAsset)
+    
+    if (asset) {
+      return <CryptoIcon icon={asset.icon} symbol={asset.symbol} size={size} />
+    }
+    
+    // Fallback to specific icons
+    if (symbol.includes('BTC')) return <CryptoIcon icon={btcIcon} symbol="BTC" size={size} />
+    if (symbol.includes('ETH')) return <CryptoIcon icon={ethIcon} symbol="ETH" size={size} />
+    if (symbol.includes('BNB')) return <CryptoIcon icon={bnbIcon} symbol="BNB" size={size} />
+    if (symbol.includes('SOL')) return <CryptoIcon icon={solIcon} symbol="SOL" size={size} />
+    if (symbol.includes('XRP')) return <CryptoIcon icon={xrpIcon} symbol="XRP" size={size} />
+    if (symbol.includes('ADA')) return <CryptoIcon icon={adaIcon} symbol="ADA" size={size} />
+    
+    // Generic fallback for metals and others
+    return <CryptoIcon icon={genericIcon} symbol={baseAsset} size={size} />
+  }
   const [sortBy, setSortBy] = useState<'marketCap' | 'volume' | 'change'>('marketCap')
   const [watchlist, setWatchlist] = useState<string[]>([])
 
@@ -253,8 +295,8 @@ export default function MarketOverview() {
                 {/* Header */}
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-[#2962FF]/20 rounded-full flex items-center justify-center text-sm font-bold text-white">
-                      {item.rank ? `#${item.rank}` : item.symbol.slice(0, 2)}
+                    <div className="w-8 h-8 flex items-center justify-center">
+                      {getSymbolIcon(item.symbol, 32)}
                     </div>
                     <div>
                       <div className="text-white font-semibold text-sm">{item.symbol}</div>
@@ -346,8 +388,8 @@ export default function MarketOverview() {
                     <td className="px-4 py-3 text-sm text-gray-400">{item.rank || index + 1}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 bg-[#2962FF]/20 rounded-full flex items-center justify-center text-xs font-bold text-white">
-                          {item.rank ? `#${item.rank}` : item.symbol.slice(0, 2)}
+                        <div className="w-6 h-6 flex items-center justify-center">
+                          {getSymbolIcon(item.symbol, 24)}
                         </div>
                         <div>
                           <div className="text-white font-medium text-sm">{item.symbol}</div>

@@ -10,10 +10,11 @@ import xrpIcon from 'cryptocurrency-icons/svg/color/xrp.svg'
 import dotIcon from 'cryptocurrency-icons/svg/color/dot.svg'
 import dogeIcon from 'cryptocurrency-icons/svg/color/doge.svg'
 import maticIcon from 'cryptocurrency-icons/svg/color/matic.svg'
-import paxgIcon from 'cryptocurrency-icons/svg/color/paxg.svg'
 import usdtIcon from 'cryptocurrency-icons/svg/color/usdt.svg'
-import busdIcon from 'cryptocurrency-icons/svg/color/busd.svg'
 import usdcIcon from 'cryptocurrency-icons/svg/color/usdc.svg'
+
+// For icons that don't exist in the library, use generic ones
+import genericIcon from 'cryptocurrency-icons/svg/color/generic.svg'
 
 export interface Asset {
   symbol: string
@@ -140,7 +141,7 @@ export const ASSETS: Asset[] = [
   {
     symbol: 'PAXG',
     name: 'PAX Gold',
-    icon: paxgIcon,
+    icon: genericIcon, // Use generic icon since paxg doesn't exist
     type: 'gold',
     decimals: 8,
     minOrderSize: 0.001,
@@ -163,7 +164,7 @@ export const ASSETS: Asset[] = [
   {
     symbol: 'BUSD',
     name: 'Binance USD',
-    icon: busdIcon,
+    icon: genericIcon, // Use generic icon since busd doesn't exist
     type: 'stablecoin',
     decimals: 8,
     minOrderSize: 1,

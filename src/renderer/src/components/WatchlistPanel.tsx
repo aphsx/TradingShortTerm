@@ -1,6 +1,26 @@
 import { useState } from 'react'
 import { useTradingStore } from '../store/useTradingStore'
+import { getAssetBySymbol } from '../config/assets'
 import { Star, TrendingUp, TrendingDown, Search } from 'lucide-react'
+
+// Import crypto icons
+import btcIcon from 'cryptocurrency-icons/svg/color/btc.svg'
+import ethIcon from 'cryptocurrency-icons/svg/color/eth.svg'
+import bnbIcon from 'cryptocurrency-icons/svg/color/bnb.svg'
+import solIcon from 'cryptocurrency-icons/svg/color/sol.svg'
+import xrpIcon from 'cryptocurrency-icons/svg/color/xrp.svg'
+import adaIcon from 'cryptocurrency-icons/svg/color/ada.svg'
+import genericIcon from 'cryptocurrency-icons/svg/color/generic.svg'
+
+// Create a simple icon component for SVG
+const CryptoIcon = ({ icon, symbol, size = 20 }: { icon: string; symbol: string; size?: number }) => (
+  <img 
+    src={icon} 
+    alt={symbol}
+    style={{ width: size, height: size }}
+    className="rounded-full"
+  />
+)
 
 interface MarketSymbol {
   symbol: string
@@ -42,6 +62,28 @@ export default function WatchlistPanel() {
   const { symbol, setSymbol } = useTradingStore()
   const [searchQuery, setSearchQuery] = useState('')
   const [watchlist, setWatchlist] = useState<string[]>(['BTCUSDT', 'ETHUSDT', 'BNBUSDT'])
+
+  // Helper function to get crypto icon
+  const getSymbolIcon = (symbol: string, size = 20) => {
+    // Extract base asset from symbol (e.g., BTC from BTCUSDT)
+    const baseAsset = symbol.replace(/USDT|BUSD|USDC/, '')
+    const asset = getAssetBySymbol(baseAsset)
+    
+    if (asset) {
+      return <CryptoIcon icon={asset.icon} symbol={asset.symbol} size={size} />
+    }
+    
+    // Fallback to specific icons
+    if (symbol.includes('BTC')) return <CryptoIcon icon={btcIcon} symbol="BTC" size={size} />
+    if (symbol.includes('ETH')) return <CryptoIcon icon={ethIcon} symbol="ETH" size={size} />
+    if (symbol.includes('BNB')) return <CryptoIcon icon={bnbIcon} symbol="BNB" size={size} />
+    if (symbol.includes('SOL')) return <CryptoIcon icon={solIcon} symbol="SOL" size={size} />
+    if (symbol.includes('XRP')) return <CryptoIcon icon={xrpIcon} symbol="XRP" size={size} />
+    if (symbol.includes('ADA')) return <CryptoIcon icon={adaIcon} symbol="ADA" size={size} />
+    
+    // Generic fallback for metals and others
+    return <CryptoIcon icon={genericIcon} symbol={baseAsset} size={size} />
+  }
 
   const filteredSymbols = POPULAR_SYMBOLS.filter(
     (s) =>
@@ -104,17 +146,11 @@ export default function WatchlistPanel() {
                   />
                 </button>
                 <div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 flex items-center justify-center">
+                      {getSymbolIcon(item.symbol, 16)}
+                    </div>
                     <div className="text-white text-sm font-medium">{item.symbol}</div>
-                    {item.symbol.includes('GOLD') || item.symbol.includes('XAU') ? (
-                      <span className="text-xs bg-yellow-500/20 text-yellow-500 px-1 rounded">🥇</span>
-                    ) : item.symbol.includes('SILVER') ? (
-                      <span className="text-xs bg-gray-500/20 text-gray-400 px-1 rounded">⚪</span>
-                    ) : item.symbol.includes('PLATINUM') ? (
-                      <span className="text-xs bg-purple-500/20 text-purple-400 px-1 rounded">🔘</span>
-                    ) : item.symbol.includes('PALLADIUM') ? (
-                      <span className="text-xs bg-indigo-500/20 text-indigo-400 px-1 rounded">⚫</span>
-                    ) : null}
                   </div>
                   <div className="text-gray-500 text-[10px] truncate">{item.name}</div>
                 </div>
