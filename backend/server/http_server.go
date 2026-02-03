@@ -103,6 +103,8 @@ func (s *Server) setupRoutes() {
 		api.GET("/balance", s.handleGetBalance)
 		api.GET("/orders", s.handleGetOrders)         // Get order history
 		api.GET("/orders/open", s.handleGetOpenOrders) // Get open orders
+		api.GET("/trades", s.handleGetTrades)         // Get account trade history
+		api.GET("/depth", s.handleGetDepth)           // Get order book depth
 	}
 }
 
@@ -554,6 +556,62 @@ func (s *Server) handleGetBalance(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"balances": response})
+}
+
+// handleGetTrades handles retrieving account trade history
+func (s *Server) handleGetTrades(c *gin.Context) {
+	symbol := c.DefaultQuery("symbol", "BTCUSDT")
+	limitStr := c.DefaultQuery("limit", "50")
+	
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		limit = 50
+	}
+
+	trades, err := s.tradingClient.GetMyTrades(symbol, limit)
+	if err != nil {
+		log.Printf("❌ Failed to fetch trades: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	log.Printf("📈 Retrieved %d trades for %s", len(trades), symbol)
+	c.JSON(http.StatusOK, gin.H{
+		"trades": trades,
+		"count":  len(trades),
+		"symbol": symbol,
+	})
+}
+
+// handleGetDepth handles retrieving order book depth
+func (s *Server) handleGetDepth(c *gin.Context) {
+	symbol := c.DefaultQuery("symbol", "BTCUSDT")
+	limitStr := c.DefaultQuery("limit", "100")
+	
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		limit = 100
+	}
+
+	depth, err := s.tradingClient.GetOrderBookDepth(symbol, limit)
+	if err != nil {
+		log.Printf("❌ Failed to fetch order book depth: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	log.Printf("📊 Retrieved order book depth for %s (bids: %d, asks: %d)", 
+		symbol, len(depth.Bids), len(depth.Asks))
+	c.JSON(http.StatusOK, gin.H{
+		"lastUpdateId": depth.LastUpdateID,
+		"bids":         depth.Bids,
+		"asks":         depth.Asks,
+		"symbol":       symbol,
+	})
 }
 
 func (s *Server) handlePlaceOrder(c *gin.Context) {

@@ -563,3 +563,109 @@ func (tc *TradingClient) GetKlinesWithTimeRange(symbol, interval, startTime, end
 		time.Unix(end/1000, 0).Format("2006-01-02 15:04:05"))
 	return result, nil
 }
+
+// TradeInfo represents account trade information
+type TradeInfo struct {
+	Symbol          string `json:"symbol"`
+	ID              int64  `json:"id"`
+	OrderID         int64  `json:"orderId"`
+	OrderListID     int64  `json:"orderListId"`
+	Price           string `json:"price"`
+	Qty             string `json:"qty"`
+	QuoteQty        string `json:"quoteQty"`
+	Commission      string `json:"commission"`
+	CommissionAsset string `json:"commissionAsset"`
+	Time            int64  `json:"time"`
+	IsBuyer         bool   `json:"isBuyer"`
+	IsMaker         bool   `json:"isMaker"`
+	IsBestMatch     bool   `json:"isBestMatch"`
+}
+
+// GetMyTrades retrieves account trade history
+func (tc *TradingClient) GetMyTrades(symbol string, limit int) ([]TradeInfo, error) {
+	// Check if API keys are configured
+	if tc.apiKey == "" || tc.apiKey == "your_testnet_api_key_here" {
+		return nil, fmt.Errorf("API keys not configured. Please set up Binance testnet API keys")
+	}
+
+	// Resync time before API call
+	if err := tc.syncTime(); err != nil {
+		log.Printf("⚠️  Time sync failed, proceeding anyway: %v", err)
+	}
+
+	service := tc.client.NewListMyTradesService().Symbol(symbol)
+	if limit > 0 {
+		service = service.Limit(limit)
+	}
+
+	trades, err := service.Do(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch my trades: %w", err)
+	}
+
+	results := make([]TradeInfo, len(trades))
+	for i, trade := range trades {
+		results[i] = TradeInfo{
+			Symbol:          trade.Symbol,
+			ID:              trade.ID,
+			OrderID:         trade.OrderID,
+			OrderListID:     trade.OrderListID,
+			Price:           trade.Price,
+			Qty:             trade.Quantity,
+			QuoteQty:        trade.QuoteQuantity,
+			Commission:      trade.Commission,
+			CommissionAsset: trade.CommissionAsset,
+			Time:            trade.Time,
+			IsBuyer:         trade.IsBuyer,
+			IsMaker:         trade.IsMaker,
+			IsBestMatch:     trade.IsBestMatch,
+		}
+	}
+
+	log.Printf("📈 Retrieved %d trades for %s", len(results), symbol)
+	return results, nil
+}
+
+// DepthInfo represents order book depth information
+type DepthInfo struct {
+	LastUpdateID int64       `json:"lastUpdateId"`
+	Bids         [][]string  `json:"bids"`
+	Asks         [][]string  `json:"asks"`
+}
+
+// GetOrderBookDepth retrieves order book depth
+func (tc *TradingClient) GetOrderBookDepth(symbol string, limit int) (*DepthInfo, error) {
+	if limit == 0 {
+		limit = 100 // Default limit
+	}
+
+	depth, err := tc.client.NewDepthService().
+		Symbol(symbol).
+		Limit(limit).
+		Do(context.Background())
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get order book depth: %w", err)
+	}
+
+	// Convert bids and asks to string arrays
+	bids := make([][]string, len(depth.Bids))
+	for i, bid := range depth.Bids {
+		bids[i] = []string{bid.Price, bid.Quantity}
+	}
+
+	asks := make([][]string, len(depth.Asks))
+	for i, ask := range depth.Asks {
+		asks[i] = []string{ask.Price, ask.Quantity}
+	}
+
+	result := &DepthInfo{
+		LastUpdateID: depth.LastUpdateID,
+		Bids:         bids,
+		Asks:         asks,
+	}
+
+	log.Printf("📊 Retrieved order book depth for %s (bids: %d, asks: %d)", 
+		symbol, len(bids), len(asks))
+	return result, nil
+}
