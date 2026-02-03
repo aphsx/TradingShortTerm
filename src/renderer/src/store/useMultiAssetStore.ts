@@ -27,6 +27,7 @@ interface MultiAssetStore {
   assets: Asset[]
   tradingPairs: TradingPair[]
   popularPairs: TradingPair[]
+  availableSymbols: string[] // From backend
   
   // Balance data
   balances: Balance[]
@@ -40,6 +41,7 @@ interface MultiAssetStore {
   selectedQuoteAsset: string
   isLoadingBalance: boolean
   isLoadingPrices: boolean
+  isLoadingSymbols: boolean
   
   // Actions
   setCurrentPair: (symbol: string) => void
@@ -49,6 +51,9 @@ interface MultiAssetStore {
   setPrices: (prices: Record<string, PriceData>) => void
   setLoadingBalance: (loading: boolean) => void
   setLoadingPrices: (loading: boolean) => void
+  setLoadingSymbols: (loading: boolean) => void
+  setAvailableSymbols: (symbols: string[]) => void
+  fetchAvailableSymbols: () => Promise<void>
   
   // Getters
   getCurrentPrice: () => number
@@ -73,6 +78,7 @@ export const useMultiAssetStore = create<MultiAssetStore>((set, get) => ({
     ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 
      'XRPUSDT', 'DOTUSDT', 'DOGEUSDT', 'MATICUSDT', 'PAXGUSDT'].includes(pair.symbol)
   ),
+  availableSymbols: [],
   
   balances: [],
   totalPortfolioValue: 0,
@@ -82,6 +88,7 @@ export const useMultiAssetStore = create<MultiAssetStore>((set, get) => ({
   selectedQuoteAsset: 'USDT',
   isLoadingBalance: false,
   isLoadingPrices: false,
+  isLoadingSymbols: false,
   
   // Actions
   setCurrentPair: (symbol: string) => {
@@ -162,6 +169,24 @@ export const useMultiAssetStore = create<MultiAssetStore>((set, get) => ({
   
   setLoadingBalance: (loading: boolean) => set({ isLoadingBalance: loading }),
   setLoadingPrices: (loading: boolean) => set({ isLoadingPrices: loading }),
+  setLoadingSymbols: (loading: boolean) => set({ isLoadingSymbols: loading }),
+  
+  setAvailableSymbols: (symbols: string[]) => set({ availableSymbols: symbols }),
+  
+  fetchAvailableSymbols: async () => {
+    set({ isLoadingSymbols: true })
+    try {
+      const response = await fetch('http://localhost:8080/api/symbols/default')
+      const data = await response.json()
+      if (data.symbols) {
+        set({ availableSymbols: data.symbols })
+      }
+    } catch (error) {
+      console.error('Failed to fetch available symbols:', error)
+    } finally {
+      set({ isLoadingSymbols: false })
+    }
+  },
   
   // Getters
   getCurrentPrice: () => {

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useTradingStore } from '../store/useTradingStore'
+import { useMultiAssetStore } from '../store/useMultiAssetStore'
 import { ArrowUpDown, TrendingUp, TrendingDown } from 'lucide-react'
 
 // Import crypto icons
@@ -19,20 +19,14 @@ const CryptoIcon = ({ icon, symbol, size = 20 }: { icon: string; symbol: string;
 type OrderType = 'limit' | 'market'
 type OrderSide = 'buy' | 'sell'
 
-interface Balance {
-  asset: string
-  free: string
-  locked: string
-}
-
 export default function TradingPanel() {
-  const { symbol, ticker, currentPrice } = useTradingStore()
+  const { currentSymbol, getCurrentPrice, balances, setBalances } = useMultiAssetStore()
+  const currentPrice = getCurrentPrice()
   const [orderType, setOrderType] = useState<OrderType>('limit')
   const [orderSide, setOrderSide] = useState<OrderSide>('buy')
   const [price, setPrice] = useState('')
   const [amount, setAmount] = useState('')
   const [total, setTotal] = useState('')
-  const [balances, setBalances] = useState<Balance[]>([])
   const [isLoadingBalance, setIsLoadingBalance] = useState(false)
 
   // Fetch balance on component mount
@@ -135,7 +129,7 @@ export default function TradingPanel() {
     }
 
     const order = {
-      symbol,
+      symbol: currentSymbol,
       side: orderSide.toUpperCase(),
       type: orderType.toUpperCase(),
       quantity: btcQuantity.toFixed(5), // Format to 5 decimals (Binance stepSize)
@@ -235,11 +229,11 @@ export default function TradingPanel() {
           <>
             {/* Trading Pair Info */}
             <div className="bg-[#131722] rounded p-2 mb-3">
-              <div className="text-center text-xs text-gray-400 mb-1">Trading Pair: BTC/USDT</div>
+              <div className="text-center text-xs text-gray-400 mb-1">Trading Pair: {currentSymbol}</div>
               <div className="text-center text-sm">
                 <span className="text-gray-400">Current Price: </span>
                 <span className="text-white font-bold">
-                  ${currentPrice > 0 ? currentPrice.toFixed(2) : (ticker?.price.toFixed(2) || '0.00')}
+                  ${currentPrice > 0 ? currentPrice.toFixed(2) : '0.00'}
                 </span>
               </div>
             </div>
@@ -307,7 +301,7 @@ export default function TradingPanel() {
                 type="number"
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
-                placeholder={currentPrice > 0 ? currentPrice.toFixed(2) : (ticker?.price.toFixed(2) || '0.00')}
+                placeholder={currentPrice > 0 ? currentPrice.toFixed(2) : '0.00'}
                 className="w-full bg-[#131722] text-white text-sm px-3 py-2 rounded 
                          border border-[#2B2B43] focus:outline-none focus:border-[#2962FF]"
               />

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/aphis/24hrt-backend/client"
+	"github.com/aphis/24hrt-backend/config"
 	"github.com/aphis/24hrt-backend/websocket"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -98,6 +99,7 @@ func (s *Server) setupRoutes() {
 		api.GET("/kline", s.handleKline)
 		api.GET("/kline/history", s.handleKlineHistory)   // Historical data
 		api.GET("/symbols", s.handleGetSymbols)           // Available symbols
+		api.GET("/symbols/default", s.handleGetDefaultSymbols) // Default symbols from config
 		api.GET("/intervals", s.handleGetIntervals)       // Available intervals
 		api.POST("/order", s.handlePlaceOrder)
 		api.GET("/balance", s.handleGetBalance)
@@ -181,6 +183,15 @@ func (s *Server) handleGetSymbols(c *gin.Context) {
 		"symbols": symbols,
 		"count":   len(symbols),
 		"source":  "binance-api",
+	})
+}
+
+// handleGetDefaultSymbols returns default symbols from config
+func (s *Server) handleGetDefaultSymbols(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"symbols": config.AppConfig.DefaultSymbols,
+		"count":   len(config.AppConfig.DefaultSymbols),
+		"source":  "config",
 	})
 }
 

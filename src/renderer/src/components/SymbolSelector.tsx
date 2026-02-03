@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useTradingStore } from '../store/useTradingStore'
+import { useMultiAssetStore } from '../store/useMultiAssetStore'
 import { cn } from '../lib/utils'
 
 interface Symbol {
@@ -10,7 +10,7 @@ interface Symbol {
 }
 
 export default function SymbolSelector() {
-  const { symbol, setSymbol } = useTradingStore()
+  const { currentSymbol, setCurrentPair, availableSymbols, fetchAvailableSymbols, isLoadingSymbols } = useMultiAssetStore()
   const [searchQuery, setSearchQuery] = useState('')
   const [symbols, setSymbols] = useState<Symbol[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -24,6 +24,14 @@ export default function SymbolSelector() {
     setIsLoading(true)
     setError('')
     
+    try {
+      // Try to fetch from backend first
+      await fetchAvailableSymbols()
+    } catch (error) {
+      console.error('Failed to fetch symbols from backend:', error)
+    }
+    
+    // Fallback to all symbols
     try {
       const response = await fetch('http://localhost:8080/api/symbols')
       if (!response.ok) {
@@ -48,7 +56,17 @@ export default function SymbolSelector() {
     }
   }
 
-  const filteredSymbols = symbols.filter((s) =>
+  // Use backend symbols if available, otherwise fallback
+  const displaySymbols = availableSymbols.length > 0 
+    ? availableSymbols.map(sym => ({
+        symbol: sym,
+        baseAsset: sym.replace(/USDT$|BUSD$|BTC$|ETH$/, ''),
+        quoteAsset: sym.includes('USDT') ? 'USDT' : sym.includes('BUSD') ? 'BUSD' : 'BTC',
+        status: 'TRADING'
+      }))
+    : symbols
+
+  const filteredSymbols = displaySymbols.filter((s) =>
     s.symbol.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
@@ -67,7 +85,7 @@ export default function SymbolSelector() {
 
       {/* Symbol List */}
       <div className="flex-1 overflow-y-auto">
-        {isLoading ? (
+        {(isLoading || isLoadingSymbols) ? (
           <div className="p-4 text-center">
             <p className="text-gray-400 text-sm">Loading symbols...</p>
           </div>
@@ -89,10 +107,10 @@ export default function SymbolSelector() {
           filteredSymbols.map((s) => (
             <button
               key={s.symbol}
-              onClick={() => setSymbol(s.symbol)}
+              onClick={() => setCurrentPair(s.symbol)}
               className={cn(
                 'w-full px-4 py-3 text-left text-sm transition-colors border-l-2',
-                symbol === s.symbol
+                currentSymbol === s.symbol
                   ? 'bg-[#2b2b43] text-white border-blue-500'
                   : 'text-gray-400 hover:bg-[#2b2b43] hover:text-white border-transparent'
               )}
