@@ -9,11 +9,13 @@ import { useTradingStore } from '../store/useTradingStore'
 import { BarChart3, TrendingUp } from 'lucide-react'
 
 export default function TradingViewLayout() {
-  const { connectWebSocket, connectPriceWebSocket, disconnectWebSocket } = useTradingStore()
+  const { connectWebSocket, connectPriceWebSocket, disconnectWebSocket, loadHistoricalData } = useTradingStore()
   const [currentView, setCurrentView] = useState<'trading' | 'market'>('trading')
 
   useEffect(() => {
     if (currentView === 'trading') {
+      // Load historical data first, then connect WebSockets
+      loadHistoricalData()
       connectWebSocket()
       connectPriceWebSocket()
     }

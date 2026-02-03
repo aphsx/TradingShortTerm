@@ -20,7 +20,6 @@ import {
   Minus,
   ChevronLeft,
   ChevronRight,
-  Plus,
   ZoomIn,
   ZoomOut,
   BarChart3,
@@ -36,7 +35,7 @@ export default function CandlestickChart() {
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
 
-  const { candles, isLoadingHistory, getCandleArray, symbol, interval, currentPrice } = useTradingStore()
+  const { candles, isLoadingHistory, getCandleArray, symbol, interval, currentPrice, loadHistoricalData } = useTradingStore()
   const [isChartReady, setIsChartReady] = useState(false)
   const [chartType, setChartType] = useState<'candlestick' | 'line' | 'area'>('candlestick')
   const [lastPrice, setLastPrice] = useState<number>(0)
@@ -46,6 +45,14 @@ export default function CandlestickChart() {
   const [tooltip, setTooltip] = useState<{ x: number; y: number; content: string } | null>(null)
   const [mainSeries, setMainSeries] = useState<ISeriesApi<'Candlestick'> | ISeriesApi<'Line'> | ISeriesApi<'Area'> | null>(null)
   const [userInteracted, setUserInteracted] = useState(false) // Track if user manually zoomed/panned
+
+  // Load historical data on mount if no candles exist
+  useEffect(() => {
+    if (candles.size === 0 && !isLoadingHistory) {
+      loadHistoricalData()
+    }
+    return
+  }, [])
 
   // Initialize chart with TradingView styling
   useEffect(() => {
@@ -225,6 +232,7 @@ export default function CandlestickChart() {
       }
     } catch (error) {
       console.error('Error creating chart:', error)
+      return
     }
   }, [])
 
@@ -438,7 +446,6 @@ export default function CandlestickChart() {
     if (chartRef.current) {
       setUserInteracted(true) // Mark that user interacted
       const timeScale = chartRef.current.timeScale()
-      const scrollPosition = timeScale.scrollPosition()
       timeScale.applyOptions({
         barSpacing: Math.min(timeScale.options().barSpacing * 1.2, 50)
       })
@@ -459,8 +466,7 @@ export default function CandlestickChart() {
     if (chartRef.current) {
       setUserInteracted(true) // Mark that user interacted
       const timeScale = chartRef.current.timeScale()
-      const position = timeScale.scrollPosition()
-      timeScale.scrollToPosition(position - 10, false)
+      timeScale.scrollToPosition(timeScale.scrollPosition() - 10, false)
     }
   }
 
