@@ -1,8 +1,0 @@
-*.env
-*.log
-*.exe
-*.test
-*.out
-/vendor/
-/.idea/
-/.vscode/
