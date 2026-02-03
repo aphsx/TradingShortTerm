@@ -278,6 +278,88 @@ func (tc *TradingClient) CancelOrder(symbol string, orderID int64) error {
 	return nil
 }
 
+// GetAllOrders retrieves all orders for a symbol
+func (tc *TradingClient) GetAllOrders(symbol string, limit int) ([]*OrderResult, error) {
+	// Check if API keys are configured
+	if tc.apiKey == "" || tc.apiKey == "your_testnet_api_key_here" {
+		return nil, fmt.Errorf("API keys not configured. Please set up Binance testnet API keys")
+	}
+
+	// Resync time before API call
+	if err := tc.syncTime(); err != nil {
+		log.Printf("⚠️  Time sync failed, proceeding anyway: %v", err)
+	}
+
+	service := tc.client.NewListOrdersService().Symbol(symbol)
+	if limit > 0 {
+		service = service.Limit(limit)
+	}
+
+	orders, err := service.Do(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch orders: %w", err)
+	}
+
+	results := make([]*OrderResult, len(orders))
+	for i, order := range orders {
+		results[i] = &OrderResult{
+			OrderID:             order.OrderID,
+			Symbol:              order.Symbol,
+			Side:                string(order.Side),
+			Type:                string(order.Type),
+			Price:               order.Price,
+			Quantity:            order.OrigQuantity,
+			Status:              string(order.Status),
+			ExecutedQty:         order.ExecutedQuantity,
+			CummulativeQuoteQty: order.CummulativeQuoteQuantity,
+		}
+	}
+
+	log.Printf("📜 Retrieved %d orders for %s", len(results), symbol)
+	return results, nil
+}
+
+// GetOpenOrders retrieves open orders for a symbol
+func (tc *TradingClient) GetOpenOrders(symbol string) ([]*OrderResult, error) {
+	// Check if API keys are configured
+	if tc.apiKey == "" || tc.apiKey == "your_testnet_api_key_here" {
+		return nil, fmt.Errorf("API keys not configured. Please set up Binance testnet API keys")
+	}
+
+	// Resync time before API call
+	if err := tc.syncTime(); err != nil {
+		log.Printf("⚠️  Time sync failed, proceeding anyway: %v", err)
+	}
+
+	service := tc.client.NewListOpenOrdersService()
+	if symbol != "" {
+		service = service.Symbol(symbol)
+	}
+
+	orders, err := service.Do(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch open orders: %w", err)
+	}
+
+	results := make([]*OrderResult, len(orders))
+	for i, order := range orders {
+		results[i] = &OrderResult{
+			OrderID:             order.OrderID,
+			Symbol:              order.Symbol,
+			Side:                string(order.Side),
+			Type:                string(order.Type),
+			Price:               order.Price,
+			Quantity:            order.OrigQuantity,
+			Status:              string(order.Status),
+			ExecutedQty:         order.ExecutedQuantity,
+			CummulativeQuoteQty: order.CummulativeQuoteQuantity,
+		}
+	}
+
+	log.Printf("📋 Retrieved %d open orders for %s", len(results), symbol)
+	return results, nil
+}
+
 // BalanceInfo represents account balance information
 type BalanceInfo struct {
 	Asset  string
@@ -326,38 +408,6 @@ func (tc *TradingClient) PlaceMarketOrder(symbol, side, quantity string) (*Order
 		return tc.PlaceMarketSellOrder(symbol, quantity)
 	}
 	return nil, fmt.Errorf("invalid order side: %s", side)
-}
-
-// GetOpenOrders retrieves all open orders for a symbol
-func (tc *TradingClient) GetOpenOrders(symbol string) ([]*OrderResult, error) {
-	// Resync time before fetching orders
-	if err := tc.syncTime(); err != nil {
-		log.Printf("⚠️  Time sync failed, proceeding anyway: %v", err)
-	}
-
-	orders, err := tc.client.NewListOpenOrdersService().
-		Symbol(symbol).
-		Do(context.Background())
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to get open orders: %w", err)
-	}
-
-	results := make([]*OrderResult, len(orders))
-	for i, order := range orders {
-		results[i] = &OrderResult{
-			OrderID:  order.OrderID,
-			Symbol:   order.Symbol,
-			Side:     string(order.Side),
-			Type:     string(order.Type),
-			Price:    order.Price,
-			Quantity: order.OrigQuantity,
-			Status:   string(order.Status),
-		}
-	}
-
-	log.Printf("📋 Found %d open orders for %s", len(orders), symbol)
-	return results, nil
 }
 
 // TestConnectivity tests connection to Binance API

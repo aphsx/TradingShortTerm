@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -98,9 +99,10 @@ func (s *Server) setupRoutes() {
 		api.GET("/kline/history", s.handleKlineHistory) // New endpoint for historical data
 		api.GET("/symbols", s.handleGetSymbols)         // New endpoint for available symbols
 		api.GET("/intervals", s.handleGetIntervals)     // New endpoint for available intervals
-		api.GET("/balance", s.handleGetBalance)
 		api.POST("/order", s.handlePlaceOrder)
-		api.GET("/orders", s.handleGetOrders)
+		api.GET("/balance", s.handleGetBalance)
+		api.GET("/orders", s.handleGetOrders)         // Get order history
+		api.GET("/orders/open", s.handleGetOpenOrders) // Get open orders
 	}
 }
 
@@ -190,6 +192,55 @@ func (s *Server) handleGetIntervals(c *gin.Context) {
 		"count":     len(intervals),
 	})
 }
+
+// handleGetOrders handles retrieving order history
+func (s *Server) handleGetOrders(c *gin.Context) {
+	symbol := c.DefaultQuery("symbol", "BTCUSDT")
+	limitStr := c.DefaultQuery("limit", "20")
+	
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		limit = 20
+	}
+
+	orders, err := s.tradingClient.GetAllOrders(symbol, limit)
+	if err != nil {
+		log.Printf("❌ Failed to fetch orders: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	log.Printf("📜 Retrieved %d orders for %s", len(orders), symbol)
+	c.JSON(http.StatusOK, gin.H{
+		"orders": orders,
+		"count":  len(orders),
+		"symbol": symbol,
+	})
+}
+
+// handleGetOpenOrders handles retrieving open orders
+func (s *Server) handleGetOpenOrders(c *gin.Context) {
+	symbol := c.DefaultQuery("symbol", "")
+
+	orders, err := s.tradingClient.GetOpenOrders(symbol)
+	if err != nil {
+		log.Printf("❌ Failed to fetch open orders: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	log.Printf("📋 Retrieved %d open orders", len(orders))
+	c.JSON(http.StatusOK, gin.H{
+		"orders": orders,
+		"count":  len(orders),
+		"symbol": symbol,
+	})
+}
+
 func (s *Server) handleKline(c *gin.Context) {
 	// Check if it's a WebSocket upgrade request
 	if c.Request.Header.Get("Upgrade") == "websocket" {
@@ -563,25 +614,6 @@ func (s *Server) handlePlaceOrder(c *gin.Context) {
 		"status":   result.Status,
 		"quantity": result.Quantity,
 		"price":    result.Price,
-	})
-}
-
-func (s *Server) handleGetOrders(c *gin.Context) {
-	symbol := c.DefaultQuery("symbol", "BTCUSDT")
-	
-	orders, err := s.tradingClient.GetOpenOrders(symbol)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   err.Error(),
-			"message": "Failed to fetch orders",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"orders": orders,
-		"count":  len(orders),
-		"symbol": symbol,
 	})
 }
 
