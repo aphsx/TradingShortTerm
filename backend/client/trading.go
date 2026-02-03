@@ -669,3 +669,49 @@ func (tc *TradingClient) GetOrderBookDepth(symbol string, limit int) (*DepthInfo
 		symbol, len(bids), len(asks))
 	return result, nil
 }
+
+// PublicTradeInfo represents recent public trades
+type PublicTradeInfo struct {
+	ID           int64  `json:"id"`
+	Price        string `json:"price"`
+	Qty          string `json:"qty"`
+	QuoteQty     string `json:"quoteQty"`
+	Time         int64  `json:"time"`
+	IsBuyerMaker bool   `json:"isBuyerMaker"`
+	IsBestMatch  bool   `json:"isBestMatch"`
+}
+
+// GetRecentTrades retrieves recent public trades (no authentication needed)
+func (tc *TradingClient) GetRecentTrades(symbol string, limit int) ([]*PublicTradeInfo, error) {
+	if limit == 0 {
+		limit = 50 // Default limit
+	}
+	if limit > 1000 {
+		limit = 1000 // Max limit
+	}
+
+	trades, err := tc.client.NewRecentTradesService().
+		Symbol(symbol).
+		Limit(limit).
+		Do(context.Background())
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get recent trades: %w", err)
+	}
+
+	results := make([]*PublicTradeInfo, len(trades))
+	for i, trade := range trades {
+		results[i] = &PublicTradeInfo{
+			ID:           trade.ID,
+			Price:        trade.Price,
+			Qty:          trade.Quantity,
+			QuoteQty:     trade.QuoteQuantity,
+			Time:         trade.Time,
+			IsBuyerMaker: trade.IsBuyerMaker,
+			IsBestMatch:  trade.IsBestMatch,
+		}
+	}
+
+	log.Printf("📊 Retrieved %d recent trades for %s", len(results), symbol)
+	return results, nil
+}

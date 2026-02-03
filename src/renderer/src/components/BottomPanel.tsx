@@ -61,21 +61,44 @@ export default function BottomPanel() {
 }
 
 function OrderBookContent() {
-  const bids = [
-    { price: 43250.50, amount: 0.5234, total: 22634.21 },
-    { price: 43248.30, amount: 1.2341, total: 53363.87 },
-    { price: 43245.10, amount: 0.8765, total: 37903.29 },
-    { price: 43242.00, amount: 2.1234, total: 91834.57 },
-    { price: 43240.50, amount: 0.4321, total: 18682.34 }
-  ]
+  const { symbol } = useTradingStore()
+  const [bids, setBids] = useState<Array<{ price: number; amount: number; total: number }>>([])
+  const [asks, setAsks] = useState<Array<{ price: number; amount: number; total: number }>>([])
+  const [loading, setLoading] = useState(false)
 
-  const asks = [
-    { price: 43252.50, amount: 0.6543, total: 28303.16 },
-    { price: 43254.80, amount: 1.4321, total: 61957.72 },
-    { price: 43257.20, amount: 0.9876, total: 42721.56 },
-    { price: 43260.00, amount: 2.3456, total: 101472.96 },
-    { price: 43262.50, amount: 0.5432, total: 23502.43 }
-  ]
+  const fetchOrderBook = async () => {
+    try {
+      setLoading(true)
+      const response = await fetch(`http://localhost:8080/api/depth?symbol=${symbol}&limit=20`)
+      const data = await response.json()
+      
+      if (data.bids && data.asks) {
+        // Convert to format with total calculation
+        const formattedBids = data.bids.map((bid: string[]) => {
+          const price = parseFloat(bid[0])
+          const amount = parseFloat(bid[1])
+          return { price, amount, total: price * amount }
+        })
+        const formattedAsks = data.asks.map((ask: string[]) => {
+          const price = parseFloat(ask[0])
+          const amount = parseFloat(ask[1])
+          return { price, amount, total: price * amount }
+        })
+        setBids(formattedBids)
+        setAsks(formattedAsks)
+      }
+    } catch (error) {
+      console.error('Error fetching order book:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchOrderBook()
+    const interval = setInterval(fetchOrderBook, 2000) // Refresh every 2 seconds
+    return () => clearInterval(interval)
+  }, [symbol])
 
   return (
     <div className="grid grid-cols-2 h-full">
@@ -87,16 +110,26 @@ function OrderBookContent() {
           <div className="text-right">Total</div>
         </div>
         <div className="overflow-y-auto" style={{ height: 'calc(100% - 32px)' }}>
-          {bids.map((bid, idx) => (
-            <div
-              key={idx}
-              className="grid grid-cols-3 gap-2 px-3 py-1 text-xs hover:bg-[#2B2B43] cursor-pointer"
-            >
-              <div className="text-[#26a69a] font-medium">{bid.price.toFixed(2)}</div>
-              <div className="text-white text-right">{bid.amount.toFixed(4)}</div>
-              <div className="text-gray-400 text-right">{bid.total.toFixed(2)}</div>
+          {loading ? (
+            <div className="flex items-center justify-center h-full text-gray-400 text-xs">
+              Loading...
             </div>
-          ))}
+          ) : bids.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-gray-400 text-xs">
+              No bids available
+            </div>
+          ) : (
+            bids.map((bid, idx) => (
+              <div
+                key={idx}
+                className="grid grid-cols-3 gap-2 px-3 py-1 text-xs hover:bg-[#2B2B43] cursor-pointer"
+              >
+                <div className="text-[#26a69a] font-medium">{bid.price.toFixed(2)}</div>
+                <div className="text-white text-right">{bid.amount.toFixed(4)}</div>
+                <div className="text-gray-400 text-right">{bid.total.toFixed(2)}</div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 
@@ -108,16 +141,26 @@ function OrderBookContent() {
           <div className="text-right">Total</div>
         </div>
         <div className="overflow-y-auto" style={{ height: 'calc(100% - 32px)' }}>
-          {asks.map((ask, idx) => (
-            <div
-              key={idx}
-              className="grid grid-cols-3 gap-2 px-3 py-1 text-xs hover:bg-[#2B2B43] cursor-pointer"
-            >
-              <div className="text-[#ef5350] font-medium">{ask.price.toFixed(2)}</div>
-              <div className="text-white text-right">{ask.amount.toFixed(4)}</div>
-              <div className="text-gray-400 text-right">{ask.total.toFixed(2)}</div>
+          {loading ? (
+            <div className="flex items-center justify-center h-full text-gray-400 text-xs">
+              Loading...
             </div>
-          ))}
+          ) : asks.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-gray-400 text-xs">
+              No asks available
+            </div>
+          ) : (
+            asks.map((ask, idx) => (
+              <div
+                key={idx}
+                className="grid grid-cols-3 gap-2 px-3 py-1 text-xs hover:bg-[#2B2B43] cursor-pointer"
+              >
+                <div className="text-[#ef5350] font-medium">{ask.price.toFixed(2)}</div>
+                <div className="text-white text-right">{ask.amount.toFixed(4)}</div>
+                <div className="text-gray-400 text-right">{ask.total.toFixed(2)}</div>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>
@@ -125,13 +168,41 @@ function OrderBookContent() {
 }
 
 function RecentTradesContent() {
-  const trades = [
-    { price: 43251.20, amount: 0.0234, time: '14:32:45', type: 'buy' },
-    { price: 43250.50, amount: 0.1234, time: '14:32:43', type: 'sell' },
-    { price: 43252.30, amount: 0.0567, time: '14:32:41', type: 'buy' },
-    { price: 43249.80, amount: 0.2341, time: '14:32:38', type: 'sell' },
-    { price: 43251.50, amount: 0.0876, time: '14:32:35', type: 'buy' }
-  ]
+  const { symbol } = useTradingStore()
+  const [trades, setTrades] = useState<Array<{ price: number; amount: number; time: string; type: string }>>([])
+  const [loading, setLoading] = useState(false)
+
+  const fetchRecentTrades = async () => {
+    try {
+      setLoading(true)
+      const response = await fetch(`http://localhost:8080/api/recent-trades?symbol=${symbol}&limit=50`)
+      const data = await response.json()
+      
+      if (data.trades) {
+        const formattedTrades = data.trades.map((trade: any) => {
+          const date = new Date(trade.time)
+          const time = date.toLocaleTimeString('en-US', { hour12: false })
+          return {
+            price: parseFloat(trade.price),
+            amount: parseFloat(trade.qty),
+            time: time,
+            type: trade.isBuyerMaker ? 'sell' : 'buy' // If buyer is maker, it means sell order filled
+          }
+        })
+        setTrades(formattedTrades)
+      }
+    } catch (error) {
+      console.error('Error fetching recent trades:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchRecentTrades()
+    const interval = setInterval(fetchRecentTrades, 3000) // Refresh every 3 seconds
+    return () => clearInterval(interval)
+  }, [symbol])
 
   return (
     <div className="h-full flex flex-col">
@@ -141,22 +212,32 @@ function RecentTradesContent() {
         <div className="text-right">Time</div>
       </div>
       <div className="flex-1 overflow-y-auto">
-        {trades.map((trade, idx) => (
-          <div
-            key={idx}
-            className="grid grid-cols-3 gap-2 px-3 py-1 text-xs hover:bg-[#2B2B43]"
-          >
-            <div
-              className={`font-medium ${
-                trade.type === 'buy' ? 'text-[#26a69a]' : 'text-[#ef5350]'
-              }`}
-            >
-              {trade.price.toFixed(2)}
-            </div>
-            <div className="text-white text-right">{trade.amount.toFixed(4)}</div>
-            <div className="text-gray-400 text-right">{trade.time}</div>
+        {loading ? (
+          <div className="flex items-center justify-center h-full text-gray-400 text-xs">
+            Loading...
           </div>
-        ))}
+        ) : trades.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-gray-400 text-xs">
+            No recent trades
+          </div>
+        ) : (
+          trades.map((trade, idx) => (
+            <div
+              key={idx}
+              className="grid grid-cols-3 gap-2 px-3 py-1 text-xs hover:bg-[#2B2B43]"
+            >
+              <div
+                className={`font-medium ${
+                  trade.type === 'buy' ? 'text-[#26a69a]' : 'text-[#ef5350]'
+                }`}
+              >
+                {trade.price.toFixed(2)}
+              </div>
+              <div className="text-white text-right">{trade.amount.toFixed(4)}</div>
+              <div className="text-gray-400 text-right">{trade.time}</div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   )

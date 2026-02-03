@@ -96,15 +96,16 @@ func (s *Server) setupRoutes() {
 		})
 		api.GET("/price", s.handlePriceWebSocket)
 		api.GET("/kline", s.handleKline)
-		api.GET("/kline/history", s.handleKlineHistory) // New endpoint for historical data
-		api.GET("/symbols", s.handleGetSymbols)         // New endpoint for available symbols
-		api.GET("/intervals", s.handleGetIntervals)     // New endpoint for available intervals
+		api.GET("/kline/history", s.handleKlineHistory)   // Historical data
+		api.GET("/symbols", s.handleGetSymbols)           // Available symbols
+		api.GET("/intervals", s.handleGetIntervals)       // Available intervals
 		api.POST("/order", s.handlePlaceOrder)
 		api.GET("/balance", s.handleGetBalance)
-		api.GET("/orders", s.handleGetOrders)         // Get order history
-		api.GET("/orders/open", s.handleGetOpenOrders) // Get open orders
-		api.GET("/trades", s.handleGetTrades)         // Get account trade history
-		api.GET("/depth", s.handleGetDepth)           // Get order book depth
+		api.GET("/orders", s.handleGetOrders)             // Order history
+		api.GET("/orders/open", s.handleGetOpenOrders)    // Open orders
+		api.GET("/trades", s.handleGetTrades)             // Account trade history
+		api.GET("/depth", s.handleGetDepth)               // Order book depth
+		api.GET("/recent-trades", s.handleGetRecentTrades) // Recent public trades
 	}
 }
 
@@ -678,6 +679,30 @@ func (s *Server) handlePlaceOrder(c *gin.Context) {
 func (s *Server) Start(port string) error {
 	log.Printf("🚀 Starting HTTP server on :%s", port)
 	return s.router.Run(":" + port)
+}
+
+// handleGetRecentTrades handles recent public trades requests
+func (s *Server) handleGetRecentTrades(c *gin.Context) {
+	symbol := c.DefaultQuery("symbol", "BTCUSDT")
+	limitStr := c.DefaultQuery("limit", "50")
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit parameter"})
+		return
+	}
+
+	trades, err := s.tradingClient.GetRecentTrades(symbol, limit)
+	if err != nil {
+		log.Printf("❌ Failed to get recent trades: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"symbol": symbol,
+		"trades": trades,
+	})
 }
 
 // Cleanup stops all active streamers
