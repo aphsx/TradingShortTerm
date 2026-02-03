@@ -26,6 +26,19 @@ export default function TradingPanel() {
     fetchBalance()
   }, [])
 
+  // Auto-calculate total when amount or price changes
+  useEffect(() => {
+    if (amount && parseFloat(amount) > 0) {
+      const priceToUse = orderType === 'limit' && price ? parseFloat(price) : currentPrice
+      if (priceToUse > 0) {
+        const totalValue = parseFloat(amount) * priceToUse
+        setTotal(totalValue.toFixed(2))
+      }
+    } else {
+      setTotal('')
+    }
+  }, [amount, price, currentPrice, orderType])
+
   const fetchBalance = async () => {
     setIsLoadingBalance(true)
     try {
@@ -63,9 +76,21 @@ export default function TradingPanel() {
 
   const handlePercentageClick = (percentage: number) => {
     // Calculate amount based on percentage of available balance
-    const availableBalance = getUSDTBalance()
-    const calculatedAmount = (availableBalance * percentage) / 100
-    setAmount(calculatedAmount.toFixed(4))
+    if (orderSide === 'buy') {
+      // For BUY: use USDT balance and convert to BTC
+      const availableUSDT = getUSDTBalance()
+      const usdtAmount = (availableUSDT * percentage) / 100
+      const priceToUse = orderType === 'limit' && price ? parseFloat(price) : currentPrice
+      if (priceToUse > 0) {
+        const btcAmount = usdtAmount / priceToUse
+        setAmount(btcAmount.toFixed(6)) // BTC has 6 decimals
+      }
+    } else {
+      // For SELL: use BTC balance
+      const availableBTC = getBTCBalance()
+      const btcAmount = (availableBTC * percentage) / 100
+      setAmount(btcAmount.toFixed(6))
+    }
   }
 
   const handlePlaceOrder = async () => {
@@ -79,11 +104,18 @@ export default function TradingPanel() {
       return
     }
 
+    // Convert amount to proper format (minimum 0.00001 BTC for BTCUSDT)
+    const btcQuantity = parseFloat(amount)
+    if (btcQuantity < 0.00001) {
+      alert('Minimum order size is 0.00001 BTC')
+      return
+    }
+
     const order = {
       symbol,
       side: orderSide.toUpperCase(),
       type: orderType.toUpperCase(),
-      quantity: amount,
+      quantity: btcQuantity.toFixed(5), // Format to 5 decimals (Binance stepSize)
       ...(orderType === 'limit' && { price: price })
     }
 
@@ -214,13 +246,17 @@ export default function TradingPanel() {
 
         {/* Amount Input */}
         <div>
-          <label className="text-xs text-gray-400 mb-1 block">Amount</label>
+          <label className="text-xs text-gray-400 mb-1 block">
+            Amount <span className="text-gray-500">(min: 0.00001 BTC)</span>
+          </label>
           <div className="relative">
             <input
               type="number"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              placeholder="0.00"
+              placeholder="0.00000"
+              step="0.00001"
+              min="0.00001"
               className="w-full bg-[#131722] text-white text-sm px-3 py-2 rounded 
                        border border-[#2B2B43] focus:outline-none focus:border-[#2962FF]"
             />
@@ -249,12 +285,12 @@ export default function TradingPanel() {
           <label className="text-xs text-gray-400 mb-1 block">Total</label>
           <div className="relative">
             <input
-              type="number"
+              type="text"
               value={total}
-              onChange={(e) => setTotal(e.target.value)}
+              readOnly
               placeholder="0.00"
-              className="w-full bg-[#131722] text-white text-sm px-3 py-2 rounded 
-                       border border-[#2B2B43] focus:outline-none focus:border-[#2962FF]"
+              className="w-full bg-[#1a1a2e] text-white text-sm px-3 py-2 rounded 
+                       border border-[#2B2B43] cursor-not-allowed"
             />
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
               USDT
