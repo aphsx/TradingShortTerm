@@ -1,46 +1,56 @@
 // src/pages/DashboardPage.tsx
-import { MiniChart } from '../components/Dashboard/MiniChart';
-import { TrendingUp, Wallet, Activity } from 'lucide-react';
-
-const mockData = [
-  { time: '2023-01-01', value: 20 }, { time: '2023-01-02', value: 25 },
-  { time: '2023-01-03', value: 22 }, { time: '2023-01-04', value: 30 },
-];
+import { MiniChart } from '../components/Dashboard/MiniChart'
+import { TrendingUp, Wallet, Activity } from 'lucide-react'
 
 interface DashboardPageProps {
-  onNavigate: (page: string, symbol?: string) => void;
+  onNavigate: (page: string, symbol?: string) => void
 }
 
-export const DashboardPage = ({ onNavigate }: DashboardPageProps) => {
+export const DashboardPage = ({ onNavigate }: DashboardPageProps): React.ReactElement => {
   return (
     <div className="p-4 space-y-4 bg-[#0B0E11] min-h-screen text-[#EAECEF]">
-      
       {/* --- SECTION 1: COMPACT STATUS BAR --- */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {/* Total Balance */}
-        <div className="bg-[#1E2329] p-5 rounded-sm border-l-4 border-[#FCD535]"> {/* สีเหลือง Binance */}
+        <div className="bg-[#1E2329] p-5 rounded-sm border-l-4 border-[#FCD535]">
+          {' '}
+          {/* สีเหลือง Binance */}
           <div className="flex justify-between items-start mb-2">
-            <p className="text-[#848E9C] text-xs font-medium uppercase tracking-wider">Total Equity (USDT)</p>
+            <p className="text-[#848E9C] text-xs font-medium uppercase tracking-wider">
+              Total Equity (USDT)
+            </p>
             <Wallet className="w-4 h-4 text-[#848E9C]" />
           </div>
-          <h3 className="text-2xl font-mono font-bold text-[#EAECEF]">10,450<span className="text-[#848E9C] text-lg">.23</span></h3>
+          <h3 className="text-2xl font-mono font-bold text-[#EAECEF]">
+            10,450<span className="text-[#848E9C] text-lg">.23</span>
+          </h3>
           <p className="text-[#0ECB81] text-xs font-mono mt-1 flex items-center gap-1">
-             ▲ $450.00 (Today)
+            ▲ $450.00 (Today)
           </p>
         </div>
 
         {/* PnL Analysis */}
         <div className="bg-[#1E2329] p-5 rounded-sm">
-          <p className="text-[#848E9C] text-xs font-medium uppercase tracking-wider mb-2">Unrealized PnL</p>
-          <h3 className="text-2xl font-mono font-bold text-[#0ECB81]">+1,204<span className="text-sm">.00</span></h3>
-          <p className="text-[#848E9C] text-xs mt-1">ROE: <span className="text-[#0ECB81]">12.5%</span></p>
+          <p className="text-[#848E9C] text-xs font-medium uppercase tracking-wider mb-2">
+            Unrealized PnL
+          </p>
+          <h3 className="text-2xl font-mono font-bold text-[#0ECB81]">
+            +1,204<span className="text-sm">.00</span>
+          </h3>
+          <p className="text-[#848E9C] text-xs mt-1">
+            ROE: <span className="text-[#0ECB81]">12.5%</span>
+          </p>
         </div>
 
         {/* Margin Usage */}
         <div className="bg-[#1E2329] p-5 rounded-sm">
-          <p className="text-[#848E9C] text-xs font-medium uppercase tracking-wider mb-2">Margin Ratio</p>
+          <p className="text-[#848E9C] text-xs font-medium uppercase tracking-wider mb-2">
+            Margin Ratio
+          </p>
           <div className="flex items-end gap-2">
-            <h3 className="text-2xl font-mono font-bold text-[#FCD535]">12.4<span className="text-sm">%</span></h3>
+            <h3 className="text-2xl font-mono font-bold text-[#FCD535]">
+              12.4<span className="text-sm">%</span>
+            </h3>
             <span className="text-xs text-[#848E9C] mb-1">Low Risk</span>
           </div>
           {/* Progress Bar */}
@@ -51,10 +61,12 @@ export const DashboardPage = ({ onNavigate }: DashboardPageProps) => {
 
         {/* Active Position Count */}
         <div className="bg-[#1E2329] p-5 rounded-sm flex flex-col justify-between">
-          <p className="text-[#848E9C] text-xs font-medium uppercase tracking-wider">Open Positions</p>
+          <p className="text-[#848E9C] text-xs font-medium uppercase tracking-wider">
+            Open Positions
+          </p>
           <div className="flex justify-between items-end">
-             <h3 className="text-3xl font-mono font-bold text-[#EAECEF]">4</h3>
-             <button className="text-xs text-[#3B82F6] hover:text-white transition">View All</button>
+            <h3 className="text-3xl font-mono font-bold text-[#EAECEF]">4</h3>
+            <button className="text-xs text-[#3B82F6] hover:text-white transition">View All</button>
           </div>
         </div>
       </div>
@@ -66,16 +78,16 @@ export const DashboardPage = ({ onNavigate }: DashboardPageProps) => {
             <Activity className="w-4 h-4 text-[#FCD535]" /> Hot Futures
           </h2>
         </div>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div onClick={() => onNavigate('trade', 'BTCUSDT')}>
-             <MiniChart symbol="BTCUSDT" data={mockData} isUp={true} />
+          <div>
+            <MiniChart symbol="BTCUSDT" onChartClick={() => onNavigate('trade', 'BTCUSDT')} />
           </div>
-          <div onClick={() => onNavigate('trade', 'ETHUSDT')}>
-             <MiniChart symbol="ETHUSDT" data={mockData} isUp={false} />
+          <div>
+            <MiniChart symbol="ETHUSDT" onChartClick={() => onNavigate('trade', 'ETHUSDT')} />
           </div>
-          <div onClick={() => onNavigate('trade', 'SOLUSDT')}>
-             <MiniChart symbol="SOLUSDT" data={mockData} isUp={true} />
+          <div>
+            <MiniChart symbol="SOLUSDT" onChartClick={() => onNavigate('trade', 'SOLUSDT')} />
           </div>
         </div>
       </div>
@@ -86,13 +98,13 @@ export const DashboardPage = ({ onNavigate }: DashboardPageProps) => {
           <h2 className="text-sm font-bold text-[#EAECEF] flex items-center gap-2 uppercase">
             <TrendingUp className="w-4 h-4 text-[#0ECB81]" /> Market Overview
           </h2>
-          <input 
-            type="text" 
-            placeholder="Search Coin..." 
+          <input
+            type="text"
+            placeholder="Search Coin..."
             className="bg-[#0B0E11] text-xs text-white px-3 py-1.5 rounded-sm border border-[#2B3139] focus:border-[#FCD535] outline-none"
           />
         </div>
-        
+
         <table className="w-full text-left text-sm">
           <thead className="text-[#848E9C] text-xs bg-[#161A1E]">
             <tr>
@@ -105,14 +117,19 @@ export const DashboardPage = ({ onNavigate }: DashboardPageProps) => {
           </thead>
           <tbody className="divide-y divide-[#2B3139]">
             {/* Row Item */}
-            <tr className="hover:bg-[#2B3139] transition cursor-pointer group" onClick={() => onNavigate('trade', 'BNBUSDT')}>
+            <tr
+              className="hover:bg-[#2B3139] transition cursor-pointer group"
+              onClick={() => onNavigate('trade', 'BNBUSDT')}
+            >
               <td className="px-4 py-3">
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-[#EAECEF]">BNBUSDT</span>
                   <span className="text-[10px] bg-[#2B3139] text-[#FCD535] px-1 rounded">10x</span>
                 </div>
               </td>
-              <td className="px-4 py-3 text-right font-mono text-[#EAECEF] group-hover:text-white">320.50</td>
+              <td className="px-4 py-3 text-right font-mono text-[#EAECEF] group-hover:text-white">
+                320.50
+              </td>
               <td className="px-4 py-3 text-right font-mono text-[#0ECB81]">+5.20%</td>
               <td className="px-4 py-3 text-right font-mono text-[#848E9C]">1.2B</td>
               <td className="px-4 py-3 text-center">
@@ -121,14 +138,19 @@ export const DashboardPage = ({ onNavigate }: DashboardPageProps) => {
             </tr>
 
             {/* Row Item (Negative) */}
-            <tr className="hover:bg-[#2B3139] transition cursor-pointer group" onClick={() => onNavigate('trade', 'DOGEUSDT')}>
+            <tr
+              className="hover:bg-[#2B3139] transition cursor-pointer group"
+              onClick={() => onNavigate('trade', 'DOGEUSDT')}
+            >
               <td className="px-4 py-3">
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-[#EAECEF]">DOGEUSDT</span>
                   <span className="text-[10px] bg-[#2B3139] text-[#FCD535] px-1 rounded">20x</span>
                 </div>
               </td>
-              <td className="px-4 py-3 text-right font-mono text-[#EAECEF] group-hover:text-white">0.08500</td>
+              <td className="px-4 py-3 text-right font-mono text-[#EAECEF] group-hover:text-white">
+                0.08500
+              </td>
               <td className="px-4 py-3 text-right font-mono text-[#F6465D]">-2.10%</td>
               <td className="px-4 py-3 text-right font-mono text-[#848E9C]">800M</td>
               <td className="px-4 py-3 text-center">
@@ -139,5 +161,5 @@ export const DashboardPage = ({ onNavigate }: DashboardPageProps) => {
         </table>
       </div>
     </div>
-  );
-};
+  )
+}
