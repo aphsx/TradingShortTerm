@@ -67,7 +67,7 @@ export const DashboardPage = ({ onNavigate }: DashboardPageProps) => {
           </h2>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 h-40">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div onClick={() => onNavigate('trade', 'BTCUSDT')}>
              <MiniChart symbol="BTCUSDT" data={mockData} isUp={true} />
           </div>

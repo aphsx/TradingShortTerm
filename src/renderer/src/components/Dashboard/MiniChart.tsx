@@ -25,7 +25,7 @@ export const MiniChart = ({ symbol, data, isUp }: MiniChartProps) => {
       layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: 'transparent' },
       grid: { vertLines: { visible: false }, horzLines: { visible: false } },
       width: chartContainerRef.current.clientWidth,
-      height: 90,
+      height: chartContainerRef.current.clientHeight,
       rightPriceScale: { visible: false },
       timeScale: { visible: false, borderVisible: false },
       handleScroll: false,
@@ -45,21 +45,28 @@ export const MiniChart = ({ symbol, data, isUp }: MiniChartProps) => {
     series.setData(data);
     chart.timeScale().fitContent();
 
-    const handleResize = () => chart.applyOptions({ width: chartContainerRef.current?.clientWidth });
-    window.addEventListener('resize', handleResize);
+    // Use ResizeObserver for robust responsiveness
+    const resizeObserver = new ResizeObserver(entries => {
+      if (entries.length === 0 || !entries[0].target) return;
+      const { width, height } = entries[0].contentRect;
+      chart.applyOptions({ width, height });
+      chart.timeScale().fitContent();
+    });
+
+    resizeObserver.observe(chartContainerRef.current);
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       chart.remove();
     };
   }, [data, isUp]);
 
   return (
-    <div className="relative w-full h-[140px] bg-[#161A1E] border border-[#2B3139] hover:border-[#474D57] rounded-lg overflow-hidden transition-all duration-300 group shadow-lg hover:shadow-[0_0_15px_rgba(0,0,0,0.3)]">
+    <div className="relative w-full h-[220px] bg-[#161A1E] border border-[#2B3139] hover:border-[#474D57] rounded-lg overflow-hidden transition-all duration-300 group shadow-lg hover:shadow-[0_0_15px_rgba(0,0,0,0.3)] flex flex-col">
       {/* Glow Effect on Hover */}
-      <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${isUp ? 'from-transparent via-[#0ECB81] to-transparent' : 'from-transparent via-[#F6465D] to-transparent'} opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
+      <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${isUp ? 'from-transparent via-[#0ECB81] to-transparent' : 'from-transparent via-[#F6465D] to-transparent'} opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-20`} />
 
-      <div className="relative z-10 p-4 flex flex-col justify-between h-full">
+      <div className="relative z-10 p-4 flex flex-col shrink-0">
         {/* Header: Symbol & Badge */}
         <div className="flex justify-between items-start">
           <div className="flex items-center gap-2">
@@ -82,8 +89,8 @@ export const MiniChart = ({ symbol, data, isUp }: MiniChartProps) => {
         </div>
       </div>
       
-      {/* Chart Background */}
-      <div ref={chartContainerRef} className="absolute bottom-0 left-0 right-0 h-[90px] w-full opacity-60 group-hover:opacity-90 transition-opacity duration-300 pointer-events-none mix-blend-lighten" />
+      {/* Chart Container - Fills remaining space */}
+      <div ref={chartContainerRef} className="flex-1 w-full opacity-60 group-hover:opacity-90 transition-opacity duration-300 mix-blend-lighten z-0 min-h-0" />
     </div>
   );
 };
