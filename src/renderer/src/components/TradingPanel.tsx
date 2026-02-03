@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useTradingStore } from '../store/useTradingStore'
 import { ArrowUpDown, TrendingUp, TrendingDown } from 'lucide-react'
-import { getAssetBySymbol } from '../config/assets'
 
 // Import crypto icons
 import btcIcon from 'cryptocurrency-icons/svg/color/btc.svg'
@@ -257,9 +256,12 @@ export default function TradingPanel() {
             <div className="space-y-2">
               <div className="bg-[#131722] rounded p-2">
                 <div className="flex justify-between items-center mb-1">
-                  <span className="text-gray-400 text-xs">USDT (Cash)</span>
-                  <span className="text-green-400 text-xs">Available for BUY</span>
-                </div>
+                    <div className="flex items-center gap-2">
+                      <CryptoIcon icon={usdtIcon} symbol="USDT" size={16} />
+                      <span className="text-gray-400 text-xs">USDT (Cash)</span>
+                    </div>
+                    <span className="text-green-400 text-xs">Available for BUY</span>
+                  </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-white font-medium">${getUSDTBalance().toFixed(2)}</span>
                   <span className="text-gray-500">{getUSDTBalance().toFixed(2)} USDT</span>
@@ -273,9 +275,12 @@ export default function TradingPanel() {
               
               <div className="bg-[#131722] rounded p-2">
                 <div className="flex justify-between items-center mb-1">
-                  <span className="text-gray-400 text-xs">BTC (Bitcoin)</span>
-                  <span className="text-red-400 text-xs">Available for SELL</span>
-                </div>
+                    <div className="flex items-center gap-2">
+                      <CryptoIcon icon={btcIcon} symbol="BTC" size={16} />
+                      <span className="text-gray-400 text-xs">BTC (Bitcoin)</span>
+                    </div>
+                    <span className="text-red-400 text-xs">Available for SELL</span>
+                  </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-white font-medium">${getBTCValueInUSD().toFixed(2)}</span>
                   <span className="text-gray-500">{getBTCBalance().toFixed(8)} BTC</span>

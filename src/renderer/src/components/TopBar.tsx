@@ -1,10 +1,26 @@
+import { BarChart3 } from 'lucide-react'
 import { useTradingStore } from '../store/useTradingStore'
+import { getAssetBySymbol } from '../config/assets'
+
+// Import crypto icons for common symbols
+import btcIcon from 'cryptocurrency-icons/svg/color/btc.svg'
+import ethIcon from 'cryptocurrency-icons/svg/color/eth.svg'
+import paxgIcon from 'cryptocurrency-icons/svg/color/paxg.svg'
+
+// Create a simple icon component for SVG
+const CryptoIcon = ({ icon, symbol, size = 20 }: { icon: string; symbol: string; size?: number }) => (
+  <img 
+    src={icon} 
+    alt={symbol}
+    style={{ width: size, height: size }}
+    className="rounded-full"
+  />
+)
 import { formatPrice, formatPercent } from '../lib/utils'
 import { 
   Search, 
   Clock, 
   TrendingUp,
-  BarChart3,
   Settings,
   User,
   Activity,
@@ -27,11 +43,21 @@ export default function TopBar() {
   const { ticker, interval, setInterval, currentPrice, symbol } = useTradingStore()
   
   const getSymbolIcon = (symbol: string) => {
-    if (symbol.includes('GOLD') || symbol.includes('XAU')) return '🥇'
-    if (symbol.includes('SILVER')) return '⚪'
-    if (symbol.includes('PLATINUM')) return '🔘'
-    if (symbol.includes('PALLADIUM')) return '⚫'
-    return '📊'
+    // Try to get crypto icon from assets config first
+    const baseAsset = symbol.replace(/USDT|BUSD|USDC/, '')
+    const asset = getAssetBySymbol(baseAsset)
+    
+    if (asset) {
+      return <CryptoIcon icon={asset.icon} symbol={asset.symbol} size={20} />
+    }
+    
+    // Fallback to specific icons
+    if (symbol.includes('BTC')) return <CryptoIcon icon={btcIcon} symbol="BTC" size={20} />
+    if (symbol.includes('ETH')) return <CryptoIcon icon={ethIcon} symbol="ETH" size={20} />
+    if (symbol.includes('GOLD') || symbol.includes('XAU') || symbol.includes('PAXG')) return <CryptoIcon icon={paxgIcon} symbol="GOLD" size={20} />
+    
+    // Default fallback
+    return <BarChart3 className="w-5 h-5 text-gray-400" />
   }
 
   const getSymbolName = (symbol: string) => {
@@ -57,7 +83,9 @@ export default function TopBar() {
 
           {/* Current Symbol Display */}
           <div className="flex items-center gap-3 bg-[#131722] px-3 py-2 rounded-lg">
-            <span className="text-lg">{getSymbolIcon(symbol)}</span>
+            <div className="flex items-center">
+              {getSymbolIcon(symbol)}
+            </div>
             <div>
               <div className="text-white font-semibold">{symbol}</div>
               <div className="text-gray-500 text-xs">{getSymbolName(symbol)}</div>

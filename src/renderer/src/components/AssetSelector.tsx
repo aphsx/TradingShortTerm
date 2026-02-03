@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMultiAssetStore } from '../store/useMultiAssetStore'
 import { ASSETS, getPopularPairs, getAssetBySymbol } from '../config/assets'
-import { ChevronDown, Search, Star, TrendingUp } from 'lucide-react'
+import { ChevronDown, Search, Star, TrendingUp, DollarSign, Trophy } from 'lucide-react'
 
 // Create a simple icon component for SVG
 const CryptoIcon = ({ icon, symbol, size = 20 }: { icon: string; symbol: string; size?: number }) => (
@@ -130,8 +130,8 @@ export default function AssetSelector() {
             {[
               { key: 'popular', label: 'Popular', icon: Star },
               { key: 'crypto', label: 'Crypto', icon: TrendingUp },
-              { key: 'stablecoin', label: 'Stable', icon: '💵' },
-              { key: 'gold', label: 'Gold', icon: '🪙' }
+              { key: 'stablecoin', label: 'Stable', icon: DollarSign },
+              { key: 'gold', label: 'Gold', icon: Trophy }
             ].map(({ key, label, icon: Icon }) => (
               <button
                 key={key}
