@@ -74,6 +74,15 @@ export default function TradingPanel() {
     return btcBalance ? parseFloat(btcBalance.free) : 0
   }
 
+  const getBTCValueInUSD = () => {
+    const btcBalance = getBTCBalance()
+    return currentPrice > 0 ? btcBalance * currentPrice : 0
+  }
+
+  const getTotalBalanceInUSD = () => {
+    return getUSDTBalance() + getBTCValueInUSD()
+  }
+
   const handlePercentageClick = (percentage: number) => {
     // Calculate amount based on percentage of available balance
     if (orderSide === 'buy') {
@@ -194,7 +203,7 @@ export default function TradingPanel() {
       {/* Balance */}
       <div className="px-4 py-2 border-b border-[#2B2B43] flex-shrink-0">
         <div className="flex justify-between items-center mb-2">
-          <span className="text-gray-400 text-xs">Available Balance</span>
+          <span className="text-gray-400 text-xs">Total Balance (USD)</span>
           <button
             onClick={fetchBalance}
             disabled={isLoadingBalance}
@@ -210,13 +219,30 @@ export default function TradingPanel() {
           </div>
         ) : (
           <>
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-400">USDT</span>
-              <span className="text-white font-medium">{getUSDTBalance().toFixed(2)}</span>
+            {/* Total USD Balance */}
+            <div className="flex justify-between text-sm mb-3 pb-2 border-b border-[#2B2B43]">
+              <span className="text-gray-300 font-medium">Portfolio Value</span>
+              <span className="text-white font-bold text-green-400">
+                ${getTotalBalanceInUSD().toFixed(2)}
+              </span>
             </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-gray-400">BTC</span>
-              <span className="text-white font-medium">{getBTCBalance().toFixed(8)}</span>
+            
+            {/* Individual Assets with USD values */}
+            <div className="space-y-2">
+              <div className="flex justify-between text-xs">
+                <span className="text-gray-400">USDT</span>
+                <div className="text-right">
+                  <span className="text-white font-medium">${getUSDTBalance().toFixed(2)}</span>
+                  <span className="text-gray-500 ml-2">{getUSDTBalance().toFixed(2)} USDT</span>
+                </div>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-gray-400">BTC</span>
+                <div className="text-right">
+                  <span className="text-white font-medium">${getBTCValueInUSD().toFixed(2)}</span>
+                  <span className="text-gray-500 ml-2">{getBTCBalance().toFixed(8)} BTC</span>
+                </div>
+              </div>
             </div>
           </>
         )}
@@ -332,12 +358,17 @@ export default function TradingPanel() {
         <div className="pt-3 border-t border-[#2B2B43] space-y-1">
           <div className="flex justify-between text-xs">
             <span className="text-gray-400">Max Buy</span>
-            <span className="text-white">
-              {currentPrice > 0 && getUSDTBalance() > 0 
-                ? (getUSDTBalance() / currentPrice).toFixed(6) + ' BTC'
-                : '0.000000 BTC'
-              }
-            </span>
+            <div className="text-right">
+              <span className="text-white">
+                {currentPrice > 0 && getUSDTBalance() > 0 
+                  ? (getUSDTBalance() / currentPrice).toFixed(6) + ' BTC'
+                  : '0.000000 BTC'
+                }
+              </span>
+              <span className="text-gray-500 ml-2">
+                (${getUSDTBalance().toFixed(2)})
+              </span>
+            </div>
           </div>
           <div className="flex justify-between text-xs">
             <span className="text-gray-400">Trading Fee</span>
