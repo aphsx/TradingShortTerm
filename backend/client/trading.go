@@ -593,7 +593,7 @@ func (tc *TradingClient) GetMyTrades(symbol string, limit int) ([]TradeInfo, err
 		log.Printf("⚠️  Time sync failed, proceeding anyway: %v", err)
 	}
 
-	service := tc.client.NewListMyTradesService().Symbol(symbol)
+	service := tc.client.NewListTradesService().Symbol(symbol)
 	if limit > 0 {
 		service = service.Limit(limit)
 	}
@@ -609,7 +609,7 @@ func (tc *TradingClient) GetMyTrades(symbol string, limit int) ([]TradeInfo, err
 			Symbol:          trade.Symbol,
 			ID:              trade.ID,
 			OrderID:         trade.OrderID,
-			OrderListID:     trade.OrderListID,
+			OrderListID:     trade.OrderListId,
 			Price:           trade.Price,
 			Qty:             trade.Quantity,
 			QuoteQty:        trade.QuoteQuantity,
