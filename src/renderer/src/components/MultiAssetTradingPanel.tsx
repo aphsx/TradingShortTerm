@@ -1,11 +1,8 @@
 import { useState, useEffect } from 'react'
-import { useTradingStore } from '../store/useTradingStore'
-import { ArrowUpDown, TrendingUp, TrendingDown } from 'lucide-react'
-import { getAssetBySymbol } from '../config/assets'
-
-// Import crypto icons
-import btcIcon from 'cryptocurrency-icons/svg/color/btc.svg'
-import usdtIcon from 'cryptocurrency-icons/svg/color/usdt.svg'
+import { useMultiAssetStore } from '../store/useMultiAssetStore'
+import AssetSelector from './AssetSelector'
+import { ArrowUpDown, TrendingUp, TrendingDown, RefreshCw } from 'lucide-react'
+import { getMinOrderSize, getStepSize } from '../config/assets'
 
 // Create a simple icon component for SVG
 const CryptoIcon = ({ icon, symbol, size = 20 }: { icon: string; symbol: string; size?: number }) => (
@@ -20,21 +17,30 @@ const CryptoIcon = ({ icon, symbol, size = 20 }: { icon: string; symbol: string;
 type OrderType = 'limit' | 'market'
 type OrderSide = 'buy' | 'sell'
 
-interface Balance {
-  asset: string
-  free: string
-  locked: string
-}
+export default function MultiAssetTradingPanel() {
+  const { 
+    currentPair,
+    balances,
+    totalPortfolioValue,
+    isLoadingBalance,
+    setBalances,
+    setLoadingBalance,
+    getCurrentPrice,
+    getCurrentBaseAsset,
+    getCurrentQuoteAsset,
+    getAssetBalance,
+    getAssetValueInUSD,
+    canBuy,
+    canSell,
+    getMaxBuyAmount,
+    getMaxSellAmount
+  } = useMultiAssetStore()
 
-export default function TradingPanel() {
-  const { symbol, ticker, currentPrice } = useTradingStore()
   const [orderType, setOrderType] = useState<OrderType>('limit')
   const [orderSide, setOrderSide] = useState<OrderSide>('buy')
   const [price, setPrice] = useState('')
   const [amount, setAmount] = useState('')
   const [total, setTotal] = useState('')
-  const [balances, setBalances] = useState<Balance[]>([])
-  const [isLoadingBalance, setIsLoadingBalance] = useState(false)
 
   // Fetch balance on component mount
   useEffect(() => {
@@ -44,7 +50,7 @@ export default function TradingPanel() {
   // Auto-calculate total when amount or price changes
   useEffect(() => {
     if (amount && parseFloat(amount) > 0) {
-      const priceToUse = orderType === 'limit' && price ? parseFloat(price) : currentPrice
+      const priceToUse = orderType === 'limit' && price ? parseFloat(price) : getCurrentPrice()
       if (priceToUse > 0) {
         const totalValue = parseFloat(amount) * priceToUse
         setTotal(totalValue.toFixed(2))
@@ -52,10 +58,18 @@ export default function TradingPanel() {
     } else {
       setTotal('')
     }
-  }, [amount, price, currentPrice, orderType])
+  }, [amount, price, getCurrentPrice, orderType])
+
+  // Update price when current pair changes
+  useEffect(() => {
+    const currentPrice = getCurrentPrice()
+    if (currentPrice > 0) {
+      setPrice(currentPrice.toFixed(currentPrice < 1 ? 4 : 2))
+    }
+  }, [currentPair, getCurrentPrice])
 
   const fetchBalance = async () => {
-    setIsLoadingBalance(true)
+    setLoadingBalance(true)
     try {
       const response = await fetch('http://localhost:8080/api/balance')
       if (!response.ok) {
@@ -69,51 +83,40 @@ export default function TradingPanel() {
       setBalances(data.balances || [])
     } catch (error) {
       console.error('Failed to fetch balance:', error)
-      setBalances([]) // Clear balances on error
-      // Show more helpful error message
+      setBalances([])
       if (error instanceof Error && error.message.includes('API keys not configured')) {
         alert('⚠️ ' + error.message + '\n\nPlease:\n1. Get testnet keys from https://testnet.binance.vision/\n2. Copy .env.testnet to backend/.env\n3. Add your API keys')
       }
     } finally {
-      setIsLoadingBalance(false)
+      setLoadingBalance(false)
     }
   }
 
-  const getUSDTBalance = () => {
-    const usdtBalance = balances.find(b => b.asset === 'USDT')
-    return usdtBalance ? parseFloat(usdtBalance.free) : 0
-  }
-
-  const getBTCBalance = () => {
-    const btcBalance = balances.find(b => b.asset === 'BTC')
-    return btcBalance ? parseFloat(btcBalance.free) : 0
-  }
-
-  const getBTCValueInUSD = () => {
-    const btcBalance = getBTCBalance()
-    return currentPrice > 0 ? btcBalance * currentPrice : 0
-  }
-
-  const getTotalBalanceInUSD = () => {
-    return getUSDTBalance() + getBTCValueInUSD()
-  }
-
   const handlePercentageClick = (percentage: number) => {
-    // Calculate amount based on percentage of available balance
     if (orderSide === 'buy') {
-      // For BUY: use USDT balance and convert to BTC
-      const availableUSDT = getUSDTBalance()
-      const usdtAmount = (availableUSDT * percentage) / 100
-      const priceToUse = orderType === 'limit' && price ? parseFloat(price) : currentPrice
+      // For BUY: use quote asset balance
+      const quoteAsset = getCurrentQuoteAsset()
+      if (!quoteAsset) return
+      
+      const availableQuote = getAssetBalance(quoteAsset.symbol)
+      const quoteAmount = (availableQuote * percentage) / 100
+      const priceToUse = orderType === 'limit' && price ? parseFloat(price) : getCurrentPrice()
+      
       if (priceToUse > 0) {
-        const btcAmount = usdtAmount / priceToUse
-        setAmount(btcAmount.toFixed(6)) // BTC has 6 decimals
+        const baseAsset = getCurrentBaseAsset()
+        if (baseAsset) {
+          const baseAmount = quoteAmount / priceToUse
+          setAmount(baseAmount.toFixed(baseAsset.decimals))
+        }
       }
     } else {
-      // For SELL: use BTC balance
-      const availableBTC = getBTCBalance()
-      const btcAmount = (availableBTC * percentage) / 100
-      setAmount(btcAmount.toFixed(6))
+      // For SELL: use base asset balance
+      const baseAsset = getCurrentBaseAsset()
+      if (!baseAsset) return
+      
+      const availableBase = getAssetBalance(baseAsset.symbol)
+      const baseAmount = (availableBase * percentage) / 100
+      setAmount(baseAmount.toFixed(baseAsset.decimals))
     }
   }
 
@@ -128,18 +131,35 @@ export default function TradingPanel() {
       return
     }
 
-    // Convert amount to proper format (minimum 0.00001 BTC for BTCUSDT)
-    const btcQuantity = parseFloat(amount)
-    if (btcQuantity < 0.00001) {
-      alert('Minimum order size is 0.00001 BTC')
+    const baseAsset = getCurrentBaseAsset()
+    if (!baseAsset) {
+      alert('Invalid base asset')
+      return
+    }
+
+    // Check minimum order size
+    const orderQuantity = parseFloat(amount)
+    if (orderQuantity < getMinOrderSize(baseAsset.symbol)) {
+      alert(`Minimum order size is ${getMinOrderSize(baseAsset.symbol)} ${baseAsset.symbol}`)
+      return
+    }
+
+    // Check balance
+    if (orderSide === 'buy' && !canBuy(orderQuantity)) {
+      alert('Insufficient quote asset balance')
+      return
+    }
+    
+    if (orderSide === 'sell' && !canSell(orderQuantity)) {
+      alert('Insufficient base asset balance')
       return
     }
 
     const order = {
-      symbol,
+      symbol: currentPair.symbol,
       side: orderSide.toUpperCase(),
       type: orderType.toUpperCase(),
-      quantity: btcQuantity.toFixed(5), // Format to 5 decimals (Binance stepSize)
+      quantity: orderQuantity.toFixed(getStepSize(baseAsset.symbol).toString().split('.')[1]?.length || 6),
       ...(orderType === 'limit' && { price: price })
     }
 
@@ -158,19 +178,17 @@ export default function TradingPanel() {
       const result = await response.json()
       console.log('✅ Order placed:', result)
       
-      // Show success message with order details
       alert(`Order placed successfully!\n\nOrder ID: ${result.orderId}\nSymbol: ${result.symbol}\nSide: ${result.side}\nType: ${result.type}\nQuantity: ${result.quantity}\nPrice: ${result.price || 'Market'}`)
 
       // Reset form and refresh balance
       setAmount('')
       setPrice('')
       setTotal('')
-      fetchBalance() // Refresh balance after successful order
+      fetchBalance()
     } catch (error) {
       console.error('❌ Order failed:', error)
       let errorMessage = 'Failed to place order: ' + (error as Error).message
       
-      // Show more helpful error message for API key issues
       if (error instanceof Error && error.message.includes('API keys not configured')) {
         errorMessage = '⚠️ API keys not configured!\n\nPlease:\n1. Get testnet keys from https://testnet.binance.vision/\n2. Copy .env.testnet to backend/.env\n3. Add your API keys\n4. Restart the backend'
       }
@@ -179,14 +197,22 @@ export default function TradingPanel() {
     }
   }
 
+  const baseAsset = getCurrentBaseAsset()
+  const quoteAsset = getCurrentQuoteAsset()
+
   return (
-    <div className="w-80 bg-[#1E222D] border-l border-[#2B2B43] flex flex-col overflow-hidden">
+    <div className="w-96 bg-[#1E222D] border-l border-[#2B2B43] flex flex-col overflow-hidden">
       {/* Header */}
       <div className="px-4 py-3 border-b border-[#2B2B43] flex-shrink-0">
         <h3 className="text-white text-sm font-semibold flex items-center gap-2">
           <ArrowUpDown className="w-4 h-4" />
-          Spot Trading
+          Multi-Asset Trading
         </h3>
+      </div>
+
+      {/* Asset Selector */}
+      <div className="px-4 py-3 border-b border-[#2B2B43] flex-shrink-0">
+        <AssetSelector />
       </div>
 
       {/* Order Type Toggle */}
@@ -222,11 +248,13 @@ export default function TradingPanel() {
           <button
             onClick={fetchBalance}
             disabled={isLoadingBalance}
-            className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50"
+            className="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50 flex items-center gap-1"
           >
+            <RefreshCw className={`w-3 h-3 ${isLoadingBalance ? 'animate-spin' : ''}`} />
             {isLoadingBalance ? 'Loading...' : 'Refresh'}
           </button>
         </div>
+        
         {balances.length === 0 ? (
           <div className="text-center py-2">
             <p className="text-gray-500 text-xs">No balance data available</p>
@@ -234,59 +262,56 @@ export default function TradingPanel() {
           </div>
         ) : (
           <>
-            {/* Trading Pair Info */}
-            <div className="bg-[#131722] rounded p-2 mb-3">
-              <div className="text-center text-xs text-gray-400 mb-1">Trading Pair: BTC/USDT</div>
-              <div className="text-center text-sm">
-                <span className="text-gray-400">Current Price: </span>
-                <span className="text-white font-bold">
-                  ${currentPrice > 0 ? currentPrice.toFixed(2) : (ticker?.price.toFixed(2) || '0.00')}
-                </span>
-              </div>
-            </div>
-            
-            {/* Total USD Balance */}
+            {/* Total Portfolio Value */}
             <div className="flex justify-between text-sm mb-3 pb-2 border-b border-[#2B2B43]">
               <span className="text-gray-300 font-medium">Total Value</span>
               <span className="text-white font-bold text-green-400">
-                ${getTotalBalanceInUSD().toFixed(2)}
+                ${totalPortfolioValue.toFixed(2)}
               </span>
             </div>
             
-            {/* Individual Assets with Trading Info */}
-            <div className="space-y-2">
-              <div className="bg-[#131722] rounded p-2">
-                <div className="flex justify-between items-center mb-1">
-                  <span className="text-gray-400 text-xs">USDT (Cash)</span>
-                  <span className="text-green-400 text-xs">Available for BUY</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-white font-medium">${getUSDTBalance().toFixed(2)}</span>
-                  <span className="text-gray-500">{getUSDTBalance().toFixed(2)} USDT</span>
-                </div>
-                {currentPrice > 0 && getUSDTBalance() > 0 && (
-                  <div className="text-xs text-gray-400 mt-1">
-                    Can buy: {(getUSDTBalance() / currentPrice).toFixed(6)} BTC
+            {/* Current Trading Assets */}
+            {baseAsset && quoteAsset && (
+              <div className="space-y-2">
+                <div className="bg-[#131722] rounded p-2">
+                  <div className="flex justify-between items-center mb-1">
+                    <div className="flex items-center gap-2">
+                      <CryptoIcon icon={quoteAsset.icon} symbol={quoteAsset.symbol} size={16} />
+                      <span className="text-gray-400 text-xs">{quoteAsset.symbol} (Quote)</span>
+                    </div>
+                    <span className="text-green-400 text-xs">Available for BUY</span>
                   </div>
-                )}
-              </div>
-              
-              <div className="bg-[#131722] rounded p-2">
-                <div className="flex justify-between items-center mb-1">
-                  <span className="text-gray-400 text-xs">BTC (Bitcoin)</span>
-                  <span className="text-red-400 text-xs">Available for SELL</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-white font-medium">${getBTCValueInUSD().toFixed(2)}</span>
-                  <span className="text-gray-500">{getBTCBalance().toFixed(8)} BTC</span>
-                </div>
-                {getBTCBalance() > 0 && (
-                  <div className="text-xs text-gray-400 mt-1">
-                    Can sell: {getBTCBalance().toFixed(6)} BTC
+                  <div className="flex justify-between text-xs">
+                    <span className="text-white font-medium">${getAssetValueInUSD(quoteAsset.symbol).toFixed(2)}</span>
+                    <span className="text-gray-500">{getAssetBalance(quoteAsset.symbol).toFixed(2)} {quoteAsset.symbol}</span>
                   </div>
-                )}
+                  {getCurrentPrice() > 0 && getAssetBalance(quoteAsset.symbol) > 0 && (
+                    <div className="text-xs text-gray-400 mt-1">
+                      Can buy: {(getAssetBalance(quoteAsset.symbol) / getCurrentPrice()).toFixed(6)} {baseAsset.symbol}
+                    </div>
+                  )}
+                </div>
+                
+                <div className="bg-[#131722] rounded p-2">
+                  <div className="flex justify-between items-center mb-1">
+                    <div className="flex items-center gap-2">
+                      <CryptoIcon icon={baseAsset.icon} symbol={baseAsset.symbol} size={16} />
+                      <span className="text-gray-400 text-xs">{baseAsset.symbol} (Base)</span>
+                    </div>
+                    <span className="text-red-400 text-xs">Available for SELL</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-white font-medium">${getAssetValueInUSD(baseAsset.symbol).toFixed(2)}</span>
+                    <span className="text-gray-500">{getAssetBalance(baseAsset.symbol).toFixed(baseAsset.decimals)} {baseAsset.symbol}</span>
+                  </div>
+                  {getAssetBalance(baseAsset.symbol) > 0 && (
+                    <div className="text-xs text-gray-400 mt-1">
+                      Can sell: {getAssetBalance(baseAsset.symbol).toFixed(6)} {baseAsset.symbol}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </>
         )}
       </div>
@@ -302,12 +327,12 @@ export default function TradingPanel() {
                 type="number"
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
-                placeholder={currentPrice > 0 ? currentPrice.toFixed(2) : (ticker?.price.toFixed(2) || '0.00')}
+                placeholder={getCurrentPrice().toFixed(getCurrentPrice() < 1 ? 4 : 2)}
                 className="w-full bg-[#131722] text-white text-sm px-3 py-2 rounded 
                          border border-[#2B2B43] focus:outline-none focus:border-[#2962FF]"
               />
               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
-                USDT
+                {quoteAsset?.symbol}
               </span>
             </div>
           </div>
@@ -316,7 +341,7 @@ export default function TradingPanel() {
         {/* Amount Input */}
         <div>
           <label className="text-xs text-gray-400 mb-1 block">
-            Amount <span className="text-gray-500">(min: 0.00001 BTC)</span>
+            Amount {baseAsset && `(min: ${getMinOrderSize(baseAsset.symbol)} ${baseAsset.symbol})`}
           </label>
           <div className="relative">
             <input
@@ -324,13 +349,13 @@ export default function TradingPanel() {
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0.00000"
-              step="0.00001"
-              min="0.00001"
+              step={baseAsset ? getStepSize(baseAsset.symbol).toString() : "0.00001"}
+              min={baseAsset ? getMinOrderSize(baseAsset.symbol).toString() : "0.00001"}
               className="w-full bg-[#131722] text-white text-sm px-3 py-2 rounded 
                        border border-[#2B2B43] focus:outline-none focus:border-[#2962FF]"
             />
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
-              BTC
+              {baseAsset?.symbol}
             </span>
           </div>
         </div>
@@ -362,7 +387,7 @@ export default function TradingPanel() {
                        border border-[#2B2B43] cursor-not-allowed"
             />
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
-              USDT
+              {quoteAsset?.symbol}
             </span>
           </div>
         </div>
@@ -374,7 +399,7 @@ export default function TradingPanel() {
               setOrderSide('buy')
               handlePlaceOrder()
             }}
-            disabled={balances.length === 0 || getUSDTBalance() <= 0}
+            disabled={!baseAsset || !quoteAsset || !canBuy(parseFloat(amount) || 0)}
             className="flex items-center justify-center gap-2 py-2.5 bg-[#26a69a] 
                      hover:bg-[#2ca89f] text-white font-semibold rounded transition-colors
                      disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#26a69a]"
@@ -387,7 +412,7 @@ export default function TradingPanel() {
               setOrderSide('sell')
               handlePlaceOrder()
             }}
-            disabled={balances.length === 0 || getBTCBalance() <= 0}
+            disabled={!baseAsset || !quoteAsset || !canSell(parseFloat(amount) || 0)}
             className="flex items-center justify-center gap-2 py-2.5 bg-[#ef5350] 
                      hover:bg-[#f15b59] text-white font-semibold rounded transition-colors
                      disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#ef5350]"
@@ -403,13 +428,24 @@ export default function TradingPanel() {
             <span className="text-gray-400">Max Buy</span>
             <div className="text-right">
               <span className="text-white">
-                {currentPrice > 0 && getUSDTBalance() > 0 
-                  ? (getUSDTBalance() / currentPrice).toFixed(6) + ' BTC'
-                  : '0.000000 BTC'
+                {baseAsset && quoteAsset ? 
+                  `${getMaxBuyAmount().toFixed(baseAsset.decimals)} ${baseAsset.symbol}` : 
+                  '0.000000'
                 }
               </span>
               <span className="text-gray-500 ml-2">
-                (${getUSDTBalance().toFixed(2)})
+                (${quoteAsset ? getAssetBalance(quoteAsset.symbol).toFixed(2) : '0.00'})
+              </span>
+            </div>
+          </div>
+          <div className="flex justify-between text-xs">
+            <span className="text-gray-400">Max Sell</span>
+            <div className="text-right">
+              <span className="text-white">
+                {baseAsset ? `${getMaxSellAmount().toFixed(baseAsset.decimals)} ${baseAsset.symbol}` : '0.000000'}
+              </span>
+              <span className="text-gray-500 ml-2">
+                (${baseAsset ? getAssetValueInUSD(baseAsset.symbol).toFixed(2) : '0.00'})
               </span>
             </div>
           </div>

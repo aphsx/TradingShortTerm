@@ -106,6 +106,8 @@ func (s *Server) setupRoutes() {
 		api.GET("/trades", s.handleGetTrades)             // Account trade history
 		api.GET("/depth", s.handleGetDepth)               // Order book depth
 		api.GET("/recent-trades", s.handleGetRecentTrades) // Recent public trades
+		api.GET("/prices", s.handleGetAllPrices)          // All symbol prices
+		api.GET("/ticker/24hr", s.handleGet24hrTicker)    // 24hr ticker data
 	}
 }
 
@@ -726,4 +728,80 @@ func (s *Server) Cleanup() {
 		log.Printf("🛑 Stopped kline streamer for %s", streamKey)
 	}
 	s.klineStreamers = make(map[string]*websocket.KlineStreamer)
+}
+
+// handleGetAllPrices returns all symbol prices
+func (s *Server) handleGetAllPrices(c *gin.Context) {
+	prices, err := s.tradingClient.GetSymbolPrices()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   err.Error(),
+			"message": "Failed to get symbol prices",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"prices": prices,
+		"count":  len(prices),
+	})
+}
+
+// handleGet24hrTicker returns 24hr ticker statistics for multiple symbols
+func (s *Server) handleGet24hrTicker(c *gin.Context) {
+	symbols := c.QueryArray("symbols")
+	if len(symbols) == 0 {
+		// Default to popular trading pairs
+		symbols = []string{
+			"BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT",
+			"XRPUSDT", "DOTUSDT", "DOGEUSDT", "MATICUSDT", "PAXGUSDT",
+			"BTCETH", "ETHBNB", "BTCBUSD", "ETHBUSD", "USDCUSDT",
+		}
+	}
+
+	type TickerData struct {
+		Symbol    string  `json:"symbol"`
+		Price     string  `json:"price"`
+		Change24h  float64 `json:"change24h"`
+		High24h   string  `json:"high24h"`
+		Low24h    string  `json:"low24h"`
+		Volume24h string  `json:"volume24h"`
+	}
+
+	var tickers []TickerData
+	
+	for _, symbol := range symbols {
+		// Get current price
+		prices, err := s.tradingClient.GetSymbolPrices()
+		if err != nil {
+			continue
+		}
+		
+		var currentPrice string
+		for _, price := range prices {
+			if price.Symbol == symbol {
+				currentPrice = price.Price
+				break
+			}
+		}
+		
+		if currentPrice == "" {
+			continue
+		}
+		
+		// Get 24hr statistics (simplified - in production you'd use Binance's 24hr ticker API)
+		tickers = append(tickers, TickerData{
+			Symbol:    symbol,
+			Price:     currentPrice,
+			Change24h:  0.0, // Would calculate from real data
+			High24h:   currentPrice,
+			Low24h:    currentPrice,
+			Volume24h: "0",
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"tickers": tickers,
+		"count":   len(tickers),
+	})
 }
