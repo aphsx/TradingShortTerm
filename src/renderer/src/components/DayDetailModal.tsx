@@ -1,5 +1,5 @@
 import React from 'react'
-import { X, TrendingUp, TrendingDown, Clock, DollarSign, Target, Activity, Brain, BarChart3, TrendingUp as TrendingIcon } from 'lucide-react'
+import { X, TrendingUp, DollarSign, Target, Activity, Brain, BarChart3, TrendingUp as TrendingIcon } from 'lucide-react'
 import { TradeOrder, MarketAnalysisLog } from '../lib/supabase'
 
 interface DayDetailModalProps {
@@ -24,7 +24,8 @@ const DayDetailModal: React.FC<DayDetailModalProps> = ({
   onClose,
   date,
   trades,
-  dayStats
+  dayStats,
+  analysisData
 }) => {
   if (!isOpen) return null
 
@@ -249,6 +250,93 @@ const DayDetailModal: React.FC<DayDetailModalProps> = ({
               </h3>
               
               <div className="space-y-4">
+                {/* Market Analysis from Database */}
+                {analysisData.length > 0 && (
+                  <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                    <h4 className="font-semibold text-purple-800 mb-3 flex items-center gap-2">
+                      <Brain className="w-4 h-4" />
+                      AI Market Analysis
+                    </h4>
+                    <div className="space-y-3 max-h-96 overflow-y-auto scrollbar-hide">
+                      {analysisData.map((analysis) => (
+                        <div key={analysis.id} className="bg-white rounded-lg p-3 border border-purple-100">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs text-purple-600 font-medium">
+                              {new Date(analysis.created_at).toLocaleTimeString()}
+                            </span>
+                            {analysis.confidence_score && (
+                              <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
+                                {analysis.confidence_score}% Confidence
+                              </span>
+                            )}
+                          </div>
+                          
+                          {/* Technical Analysis */}
+                          {analysis.technical_summary && (
+                            <div className="mb-3">
+                              <h5 className="text-xs font-semibold text-gray-700 mb-1 flex items-center gap-1">
+                                <BarChart3 className="w-3 h-3" />
+                                Technical Analysis
+                              </h5>
+                              <p className="text-xs text-gray-600 leading-relaxed">
+                                {analysis.technical_summary}
+                              </p>
+                            </div>
+                          )}
+                          
+                          {/* Sentiment Analysis */}
+                          {analysis.sentiment_summary && (
+                            <div className="mb-3">
+                              <h5 className="text-xs font-semibold text-gray-700 mb-1 flex items-center gap-1">
+                                <TrendingIcon className="w-3 h-3" />
+                                Sentiment Analysis
+                              </h5>
+                              <p className="text-xs text-gray-600 leading-relaxed">
+                                {analysis.sentiment_summary}
+                              </p>
+                            </div>
+                          )}
+                          
+                          {/* On-chain Analysis */}
+                          {analysis.onchain_summary && (
+                            <div className="mb-3">
+                              <h5 className="text-xs font-semibold text-gray-700 mb-1 flex items-center gap-1">
+                                <Activity className="w-3 h-3" />
+                                On-chain Analysis
+                              </h5>
+                              <p className="text-xs text-gray-600 leading-relaxed">
+                                {analysis.onchain_summary}
+                              </p>
+                            </div>
+                          )}
+                          
+                          {/* Final Analysis */}
+                          {analysis.final_analysis && (
+                            <div className="mb-2">
+                              <h5 className="text-xs font-semibold text-gray-700 mb-1 flex items-center gap-1">
+                                <Target className="w-3 h-3" />
+                                Final Analysis
+                              </h5>
+                              <p className="text-xs text-gray-600 leading-relaxed">
+                                {analysis.final_analysis}
+                              </p>
+                            </div>
+                          )}
+                          
+                          {/* Action Taken */}
+                          {analysis.action_taken && (
+                            <div className="pt-2 border-t border-gray-100">
+                              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                                Action: {analysis.action_taken}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Performance Analysis */}
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <h4 className="font-semibold text-blue-800 mb-2 flex items-center gap-2">

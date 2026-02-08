@@ -102,14 +102,23 @@ const DailyPerformanceCalendar: React.FC = () => {
     setSelectedDate(null)
   }
 
+  // Get today's trades for today's statistics
+  const today = new Date().toISOString().split('T')[0]
+  const todayTrades = getTradesForDay(today)
+  const todayStats = getDayStats(today)
+
   return (
     <>
       <div className="p-6 bg-white rounded-lg shadow-lg">
-        {/* Header with Stats */}
+        {/* Header */}
         <div className="mb-6">
-          <h2 className="text-2xl font-bold text-gray-800 mb-4">Daily Performance Calendar</h2>
+          <div className="mb-4">
+            <h2 className="text-2xl font-bold text-gray-800">Trading Dashboard</h2>
+            <p className="text-gray-600">Your daily performance overview and trading analytics</p>
+          </div>
           
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+          {/* Trade Statistics */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
             <div className="bg-gray-50 p-3 rounded">
               <div className="text-xs text-gray-500 mb-1">Net Realized PnL</div>
               <div className={`text-lg font-semibold ${getProfitColor(stats.netRealizedPnl)}`}>
@@ -121,9 +130,9 @@ const DailyPerformanceCalendar: React.FC = () => {
             </div>
             
             <div className="bg-gray-50 p-3 rounded">
-              <div className="text-xs text-gray-500 mb-1">Total Fills</div>
+              <div className="text-xs text-gray-500 mb-1">Total Trades</div>
               <div className="text-lg font-semibold text-gray-800">
-                {stats.totalFills}
+                {tradeOrders.length}
               </div>
             </div>
             
@@ -135,12 +144,12 @@ const DailyPerformanceCalendar: React.FC = () => {
             </div>
             
             <div className="bg-gray-50 p-3 rounded">
-              <div className="text-xs text-gray-500 mb-1">Day Win Rate</div>
+              <div className="text-xs text-gray-500 mb-1">Today's Trades</div>
               <div className="text-lg font-semibold text-gray-800">
-                {stats.dayWinRate.toFixed(1)}%
+                {todayTrades.length} trades
               </div>
               <div className="text-xs text-gray-400">
-                ({stats.winningDays}W/{stats.losingDays}L)
+                Win Rate: {todayStats.winRate.toFixed(1)}%
               </div>
             </div>
           </div>
@@ -189,7 +198,7 @@ const DailyPerformanceCalendar: React.FC = () => {
                 {performance.fills > 0 ? (
                   <>
                     <div className="text-xs text-gray-500 mb-1">
-                      {performance.fills} fills
+                      {performance.fills} trades
                     </div>
                     {performance.symbols.length > 0 && (
                       <div className="text-xs text-gray-600 mb-1">
