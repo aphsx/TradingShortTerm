@@ -5,7 +5,7 @@ import { DayDetailModal } from './DayDetailModal'
 const DailyPerformanceCalendar: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const { getDailyPerformances, getTradeStats, getTradesForDay, getDayStats, loading, error } = useTradeOrders()
+  const { getDailyPerformances, getTradeStats, getTradesForDay, getDayStats, loading, error, tradeOrders } = useTradeOrders()
   
   if (loading) {
     return (
@@ -26,6 +26,32 @@ const DailyPerformanceCalendar: React.FC = () => {
     return (
       <div className="p-6">
         <div className="text-red-500">Error loading data: {error}</div>
+      </div>
+    )
+  }
+
+  // Check if there's any trade data at all
+  const hasAnyData = tradeOrders && tradeOrders.length > 0
+  
+  if (!hasAnyData) {
+    return (
+      <div className="p-6 bg-white rounded-lg shadow-lg">
+        <div className="text-center py-12">
+          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-gray-800 mb-2">No Trading Data Available</h3>
+          <p className="text-gray-600 mb-4">
+            There are no trades recorded in your database yet. Start trading to see your performance analytics here.
+          </p>
+          <div className="text-sm text-gray-500">
+            <p>• Connect your trading account to record trades</p>
+            <p>• Import historical trade data</p>
+            <p>• Check your database connection</p>
+          </div>
+        </div>
       </div>
     )
   }
@@ -62,6 +88,11 @@ const DailyPerformanceCalendar: React.FC = () => {
   }
 
   const handleDayClick = (date: string) => {
+    const dayTrades = getTradesForDay(date)
+    if (dayTrades.length === 0) {
+      // Don't open modal for days with no trades
+      return
+    }
     setSelectedDate(date)
     setIsModalOpen(true)
   }
@@ -130,47 +161,54 @@ const DailyPerformanceCalendar: React.FC = () => {
             <span className="text-gray-600">No trades</span>
           </div>
           <div className="flex items-center gap-2 text-gray-500">
-            <span className="text-xs">Click on any day to see detailed analysis</span>
+            <span className="text-xs">💡 Click on green/red days to see detailed analysis</span>
           </div>
         </div>
 
         {/* Calendar Grid */}
         <div className="grid grid-cols-7 gap-2">
-          {dailyPerformances.map((performance) => (
-            <div
-              key={performance.date}
-              onClick={() => handleDayClick(performance.date)}
-              className={`border rounded-lg p-2 min-h-[80px] cursor-pointer transition-all hover:shadow-md hover:scale-105 ${getBgColor(performance.pnl, performance.fills)}`}
-            >
-              <div className="flex items-start justify-between mb-1">
-                <div className="text-xs text-gray-600">
-                  {formatDate(performance.date)}
-                </div>
-                <div className={`w-2 h-2 rounded-full ${getDotColor(performance.pnl, performance.fills)}`}></div>
-              </div>
-              
-              {performance.fills > 0 ? (
-                <>
-                  <div className="text-xs text-gray-500 mb-1">
-                    {performance.fills} fills
+          {dailyPerformances.map((performance) => {
+            const hasTrades = performance.fills > 0
+            return (
+              <div
+                key={performance.date}
+                onClick={() => hasTrades && handleDayClick(performance.date)}
+                className={`border rounded-lg p-2 min-h-[80px] transition-all ${
+                  hasTrades 
+                    ? 'cursor-pointer hover:shadow-md hover:scale-105' 
+                    : 'cursor-not-allowed opacity-60'
+                } ${getBgColor(performance.pnl, performance.fills)}`}
+              >
+                <div className="flex items-start justify-between mb-1">
+                  <div className="text-xs text-gray-600">
+                    {formatDate(performance.date)}
                   </div>
-                  {performance.symbols.length > 0 && (
-                    <div className="text-xs text-gray-600 mb-1">
-                      {performance.symbols.slice(0, 2).join(', ')}
-                      {performance.symbols.length > 2 && '...'}
+                  <div className={`w-2 h-2 rounded-full ${getDotColor(performance.pnl, performance.fills)}`}></div>
+                </div>
+                
+                {performance.fills > 0 ? (
+                  <>
+                    <div className="text-xs text-gray-500 mb-1">
+                      {performance.fills} fills
                     </div>
-                  )}
-                  <div className={`text-xs font-semibold ${getProfitColor(performance.pnl)}`}>
-                    {performance.pnl >= 0 ? '+' : ''}{performance.pnl.toFixed(4)} USDC
+                    {performance.symbols.length > 0 && (
+                      <div className="text-xs text-gray-600 mb-1">
+                        {performance.symbols.slice(0, 2).join(', ')}
+                        {performance.symbols.length > 2 && '...'}
+                      </div>
+                    )}
+                    <div className={`text-xs font-semibold ${getProfitColor(performance.pnl)}`}>
+                      {performance.pnl >= 0 ? '+' : ''}{performance.pnl.toFixed(4)} USDC
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-xs text-gray-400">
+                    0.00 USDC
                   </div>
-                </>
-              ) : (
-                <div className="text-xs text-gray-400">
-                  0.00 USDC
-                </div>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            )
+          })}
         </div>
       </div>
 
