@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 
 type BinanceBalance = { asset: string; free: number; locked: number }
 
@@ -33,11 +33,6 @@ export default function BinanceAccountPanel(): React.ReactElement {
     fetchAccount()
   }, [])
 
-  const bnb = useMemo(() => {
-    const bal = account?.balances?.find((b) => b.asset === 'BNB')
-    return bal ? bal.free + bal.locked : 0
-  }, [account])
-
   return (
     <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
       <div className="flex items-start justify-between gap-4">
@@ -62,29 +57,6 @@ export default function BinanceAccountPanel(): React.ReactElement {
 
       {!error && !loading && account && (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
-            <div className="bg-gray-50 p-3 rounded">
-              <div className="text-xs text-gray-500 mb-1">Account Type</div>
-              <div className="text-lg font-semibold text-gray-800">
-                {account.accountType || '-'}
-              </div>
-            </div>
-            <div className="bg-gray-50 p-3 rounded">
-              <div className="text-xs text-gray-500 mb-1">Can Trade</div>
-              <div className="text-lg font-semibold text-gray-800">
-                {String(!!account.canTrade)}
-              </div>
-            </div>
-            <div className="bg-gray-50 p-3 rounded">
-              <div className="text-xs text-gray-500 mb-1">BNB Total</div>
-              <div className="text-lg font-semibold text-gray-800">{bnb.toFixed(8)}</div>
-            </div>
-            <div className="bg-gray-50 p-3 rounded">
-              <div className="text-xs text-gray-500 mb-1">Assets</div>
-              <div className="text-lg font-semibold text-gray-800">{account.balances.length}</div>
-            </div>
-          </div>
-
           <div className="mt-6 overflow-auto">
             <table className="min-w-full text-sm">
               <thead>

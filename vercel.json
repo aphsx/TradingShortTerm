@@ -1,6 +1,6 @@
 {
   "builds": [
-    { "src": "dist/renderer/**", "use": "@vercel/static" }
+    { "src": "out/renderer/**", "use": "@vercel/static" }
   ],
-  "outputDirectory": "dist/renderer"
+  "outputDirectory": "out/renderer"
 }

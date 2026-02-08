@@ -20,7 +20,33 @@ type BinanceAccountResponse = {
   balances?: BinanceAccountBalance[]
 }
 
-function loadEnvFile(filePath: string): void {
+let binanceTimeOffsetMs = 0
+let binanceTimeOffsetUpdatedAt = 0
+
+async function getBinanceServerTimeMs(baseUrl: string): Promise<number> {
+  const url = new URL(baseUrl)
+  url.pathname = '/api/v3/time'
+  const res = await fetch(url.toString(), { method: 'GET' })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Binance time error ${res.status}: ${text || res.statusText}`)
+  }
+  const data = (await res.json()) as { serverTime?: number }
+  if (!data?.serverTime || typeof data.serverTime !== 'number') {
+    throw new Error('Binance time response invalid')
+  }
+  return data.serverTime
+}
+
+async function ensureBinanceTimeOffset(baseUrl: string): Promise<void> {
+  const now = Date.now()
+  if (binanceTimeOffsetUpdatedAt && now - binanceTimeOffsetUpdatedAt < 60_000) return
+  const serverTime = await getBinanceServerTimeMs(baseUrl)
+  binanceTimeOffsetMs = serverTime - now
+  binanceTimeOffsetUpdatedAt = now
+}
+
+function loadEnvFile(filePath: string, overrideExisting = false): void {
   try {
     if (!existsSync(filePath)) return
     const content = readFileSync(filePath, 'utf8')
@@ -37,7 +63,7 @@ function loadEnvFile(filePath: string): void {
       ) {
         value = value.slice(1, -1)
       }
-      if (process.env[key] === undefined || process.env[key] === '') {
+      if (overrideExisting || process.env[key] === undefined || process.env[key] === '') {
         process.env[key] = value
       }
     }
@@ -50,21 +76,37 @@ async function binanceSignedGet(
   pathname: string,
   params: Record<string, string | number> = {}
 ): Promise<unknown> {
-  const apiKey = process.env.BINANCE_API_KEY
-  const apiSecret = process.env.BINANCE_API_SECRET
-  const baseUrl = process.env.BINANCE_BASE_URL || 'https://testnet.binance.vision'
+  const apiKey = (process.env.BINANCE_API_KEY || '').trim().replace(/\r|\n/g, '')
+  const apiSecret = (process.env.BINANCE_API_SECRET || '').trim().replace(/\r|\n/g, '')
+  const baseUrl = (process.env.BINANCE_BASE_URL || 'https://testnet.binance.vision').trim()
 
   if (!apiKey || !apiSecret) {
     throw new Error('Missing BINANCE_API_KEY or BINANCE_API_SECRET')
   }
 
+  if (apiKey.includes(' ') || apiSecret.includes(' ')) {
+    throw new Error(
+      'BINANCE_API_KEY/BINANCE_API_SECRET contains spaces. Ensure the values are pasted as a single token with no prefix like "secret ".'
+    )
+  }
+
+  if (apiSecret.toLowerCase().startsWith('secret')) {
+    throw new Error(
+      'BINANCE_API_SECRET looks like it includes a prefix (e.g. "secret ..."). Please set only the secret value in .env.local.'
+    )
+  }
+
   const url = new URL(baseUrl)
   url.pathname = pathname
 
+  await ensureBinanceTimeOffset(baseUrl)
+
   const query = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) query.set(k, String(v))
-  query.set('timestamp', String(Date.now()))
-  query.set('recvWindow', process.env.BINANCE_RECV_WINDOW || '5000')
+  const timestamp = Date.now() + binanceTimeOffsetMs
+  const recvWindow = process.env.BINANCE_RECV_WINDOW || '10000'
+  query.set('timestamp', String(timestamp))
+  query.set('recvWindow', recvWindow)
 
   const signature = crypto.createHmac('sha256', apiSecret).update(query.toString()).digest('hex')
   query.set('signature', signature)
@@ -79,7 +121,20 @@ async function binanceSignedGet(
 
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    throw new Error(`Binance error ${res.status}: ${text || res.statusText}`)
+    const safeDiagnostics = {
+      baseUrl,
+      pathname,
+      apiKeyLength: apiKey.length,
+      apiSecretLength: apiSecret.length,
+      timestamp,
+      recvWindow,
+      query: query.toString()
+    }
+    throw new Error(
+      `Binance error ${res.status}: ${text || res.statusText}\nDiagnostics: ${JSON.stringify(
+        safeDiagnostics
+      )}`
+    )
   }
 
   return res.json()
@@ -121,8 +176,8 @@ function createWindow(): void {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
-  loadEnvFile(join(process.cwd(), '.env.local'))
   loadEnvFile(join(process.cwd(), '.env'))
+  loadEnvFile(join(process.cwd(), '.env.local'), true)
 
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron')

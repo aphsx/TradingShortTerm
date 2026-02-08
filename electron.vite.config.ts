@@ -20,7 +20,7 @@ export default defineConfig({
     },
     plugins: [react()],
     build: {
-      outDir: 'dist'
+      outDir: 'out/renderer'
     },
     server: {
       middlewareMode: false,
