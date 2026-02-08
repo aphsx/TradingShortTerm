@@ -1,70 +1,9 @@
-import React, { useState, useEffect } from 'react'
-
-interface DailyPerformance {
-  date: string
-  fills: number
-  symbols: string[]
-  pnl: number
-}
-
-interface TradeStats {
-  netRealizedPnl: number
-  grossPnl: number
-  totalFills: number
-  totalFees: number
-  dayWinRate: number
-  winningDays: number
-  losingDays: number
-}
+import React from 'react'
+import { useTradeOrders } from '../hooks/useTradeOrders'
 
 const DailyPerformanceCalendar: React.FC = () => {
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  // Mock data matching the image exactly
-  const mockDailyPerformances: DailyPerformance[] = [
-    { date: '2023-12-21', fills: 0, symbols: [], pnl: 0 },
-    { date: '2023-12-22', fills: 0, symbols: [], pnl: 0 },
-    { date: '2023-12-23', fills: 0, symbols: [], pnl: 0 },
-    { date: '2023-12-24', fills: 0, symbols: [], pnl: 0 },
-    { date: '2023-12-25', fills: 0, symbols: [], pnl: 0 },
-    { date: '2023-12-26', fills: 0, symbols: [], pnl: 0 },
-    { date: '2023-12-27', fills: 0, symbols: [], pnl: 0 },
-    { date: '2023-12-28', fills: 0, symbols: [], pnl: 0 },
-    { date: '2023-12-29', fills: 0, symbols: [], pnl: 0 },
-    { date: '2023-12-30', fills: 0, symbols: [], pnl: 0 },
-    { date: '2023-12-31', fills: 0, symbols: [], pnl: 0 },
-    { date: '2024-01-01', fills: 0, symbols: [], pnl: 0 },
-    { date: '2024-01-02', fills: 82, symbols: ['ADA', 'LTC', 'HYPE'], pnl: 3.2976 },
-    { date: '2024-01-03', fills: 53, symbols: ['HYPE', 'LTC', 'ADA'], pnl: 2.8885 },
-    { date: '2024-01-04', fills: 62, symbols: ['ADA', 'LTC', 'HYPE'], pnl: 3.3636 },
-    { date: '2024-01-05', fills: 148, symbols: ['HYPE', 'LTC', 'ADA'], pnl: 8.5594 },
-    { date: '2024-01-06', fills: 118, symbols: ['HYPE', 'ADA', 'LTC'], pnl: 7.7886 },
-    { date: '2024-01-07', fills: 151, symbols: ['HYPE', 'ADA', 'LTC'], pnl: 6.5661 },
-    { date: '2024-01-08', fills: 139, symbols: ['HYPE', 'ADA', 'LTC'], pnl: 5.9737 },
-    { date: '2024-01-09', fills: 141, symbols: ['HYPE', 'LTC', 'ADA'], pnl: 6.2059 },
-    { date: '2024-01-10', fills: 42, symbols: ['HYPE', 'ADA', 'LTC'], pnl: 1.9184 },
-    { date: '2024-01-11', fills: 83, symbols: ['HYPE', 'ADA', 'LTC'], pnl: 3.5409 },
-    { date: '2024-01-12', fills: 85, symbols: ['LTC', 'ADA', 'HYPE'], pnl: -5.8453 },
-    { date: '2024-01-13', fills: 149, symbols: ['LTC', 'ADA', 'HYPE'], pnl: 7.4851 },
-    { date: '2024-01-14', fills: 178, symbols: ['LTC', 'HYPE', 'ADA'], pnl: 8.0537 },
-    { date: '2024-01-15', fills: 31, symbols: ['ADA', 'LTC', 'HYPE'], pnl: 1.6022 },
-    { date: '2024-01-16', fills: 158, symbols: ['HYPE', 'LTC', 'ADA'], pnl: 5.9679 },
-    { date: '2024-01-17', fills: 64, symbols: ['ADA', 'LTC', 'HYPE'], pnl: 2.4083 },
-    { date: '2024-01-18', fills: 106, symbols: ['HYPE', 'LTC', 'ADA'], pnl: 4.8868 },
-    { date: '2024-01-19', fills: 12, symbols: ['HYPE', 'LTC'], pnl: 21.0910 }
-  ]
-
-  const mockStats: TradeStats = {
-    netRealizedPnl: 74.8849,
-    grossPnl: 95.7523,
-    totalFills: 1802,
-    totalFees: 20.8674,
-    dayWinRate: 94.4,
-    winningDays: 17,
-    losingDays: 1
-  }
-
+  const { getDailyPerformances, getTradeStats, loading, error } = useTradeOrders()
+  
   if (loading) {
     return (
       <div className="p-6">
@@ -88,8 +27,8 @@ const DailyPerformanceCalendar: React.FC = () => {
     )
   }
 
-  const dailyPerformances = mockDailyPerformances
-  const stats = mockStats
+  const dailyPerformances = getDailyPerformances(30)
+  const stats = getTradeStats()
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
