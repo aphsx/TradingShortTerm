@@ -1,7 +1,89 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
+import { readFileSync, existsSync } from 'fs'
+import crypto from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+
+type BinanceAccountBalance = {
+  asset: string
+  free: string
+  locked: string
+}
+
+type BinanceAccountResponse = {
+  accountType?: string
+  canTrade?: boolean
+  canWithdraw?: boolean
+  canDeposit?: boolean
+  updateTime?: number
+  balances?: BinanceAccountBalance[]
+}
+
+function loadEnvFile(filePath: string): void {
+  try {
+    if (!existsSync(filePath)) return
+    const content = readFileSync(filePath, 'utf8')
+    for (const rawLine of content.split(/\r?\n/)) {
+      const line = rawLine.trim()
+      if (!line || line.startsWith('#')) continue
+      const eq = line.indexOf('=')
+      if (eq === -1) continue
+      const key = line.slice(0, eq).trim()
+      let value = line.slice(eq + 1).trim()
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1)
+      }
+      if (process.env[key] === undefined || process.env[key] === '') {
+        process.env[key] = value
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load env file:', filePath, e)
+  }
+}
+
+async function binanceSignedGet(
+  pathname: string,
+  params: Record<string, string | number> = {}
+): Promise<unknown> {
+  const apiKey = process.env.BINANCE_API_KEY
+  const apiSecret = process.env.BINANCE_API_SECRET
+  const baseUrl = process.env.BINANCE_BASE_URL || 'https://testnet.binance.vision'
+
+  if (!apiKey || !apiSecret) {
+    throw new Error('Missing BINANCE_API_KEY or BINANCE_API_SECRET')
+  }
+
+  const url = new URL(baseUrl)
+  url.pathname = pathname
+
+  const query = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) query.set(k, String(v))
+  query.set('timestamp', String(Date.now()))
+  query.set('recvWindow', process.env.BINANCE_RECV_WINDOW || '5000')
+
+  const signature = crypto.createHmac('sha256', apiSecret).update(query.toString()).digest('hex')
+  query.set('signature', signature)
+  url.search = query.toString()
+
+  const res = await fetch(url.toString(), {
+    method: 'GET',
+    headers: {
+      'X-MBX-APIKEY': apiKey
+    }
+  })
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Binance error ${res.status}: ${text || res.statusText}`)
+  }
+
+  return res.json()
+}
 
 function createWindow(): void {
   // Create the browser window.
@@ -39,6 +121,9 @@ function createWindow(): void {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
+  loadEnvFile(join(process.cwd(), '.env.local'))
+  loadEnvFile(join(process.cwd(), '.env'))
+
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron')
 
@@ -51,6 +136,32 @@ app.whenReady().then(() => {
 
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
+
+  ipcMain.handle('binance:getAccount', async () => {
+    const data = (await binanceSignedGet('/api/v3/account')) as BinanceAccountResponse
+    const rawBalances = Array.isArray(data?.balances) ? data.balances : []
+    const balances = rawBalances
+      .map((b) => ({
+        asset: b.asset,
+        free: Number(b.free),
+        locked: Number(b.locked)
+      }))
+      .filter(
+        (b) =>
+          Number.isFinite(b.free) &&
+          Number.isFinite(b.locked) &&
+          (b.free !== 0 || b.locked !== 0)
+      )
+
+    return {
+      accountType: data?.accountType,
+      canTrade: data?.canTrade,
+      canWithdraw: data?.canWithdraw,
+      canDeposit: data?.canDeposit,
+      updateTime: data?.updateTime,
+      balances
+    }
+  })
 
   createWindow()
 

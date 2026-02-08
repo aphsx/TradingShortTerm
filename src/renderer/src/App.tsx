@@ -1,5 +1,6 @@
 // src/App.tsx
 import React from 'react'
+import BinanceAccountPanel from './components/BinanceAccountPanel'
 import DailyPerformanceCalendar from './components/DailyPerformanceCalendar'
 
 function App(): React.ReactElement {
@@ -10,6 +11,7 @@ function App(): React.ReactElement {
           <h1 className="text-3xl font-bold text-[#EAECEF] mb-2">Trading Dashboard</h1>
           <p className="text-[#848E9C]">Your daily performance overview and trading analytics</p>
         </div>
+        <BinanceAccountPanel />
         <DailyPerformanceCalendar />
       </div>
     </div>
