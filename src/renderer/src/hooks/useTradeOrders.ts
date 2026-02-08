@@ -116,12 +116,58 @@ export const useTradeOrders = () => {
     }
   }
 
+  const getTradesForDay = (date: string) => {
+    return tradeOrders.filter(trade => {
+      if (!trade.exit_time) return false
+      const exitDate = new Date(trade.exit_time).toISOString().split('T')[0]
+      return exitDate === date
+    })
+  }
+
+  const getDayStats = (date: string) => {
+    const dayTrades = getTradesForDay(date)
+    
+    if (dayTrades.length === 0) {
+      return {
+        totalPnl: 0,
+        grossPnl: 0,
+        totalFees: 0,
+        winRate: 0,
+        totalTrades: 0,
+        winningTrades: 0,
+        losingTrades: 0
+      }
+    }
+
+    const totalPnl = dayTrades.reduce((sum, trade) => sum + (trade.net_pnl || 0), 0)
+    const grossPnl = dayTrades.reduce((sum, trade) => sum + (trade.pnl_amount || 0), 0)
+    const totalFees = dayTrades.reduce((sum, trade) => 
+      sum + (trade.entry_fee || 0) + (trade.exit_fee || 0) + (trade.funding_fees || 0), 0
+    )
+    
+    const winningTrades = dayTrades.filter(trade => (trade.net_pnl || 0) > 0).length
+    const losingTrades = dayTrades.filter(trade => (trade.net_pnl || 0) < 0).length
+    const winRate = dayTrades.length > 0 ? (winningTrades / dayTrades.length) * 100 : 0
+
+    return {
+      totalPnl,
+      grossPnl,
+      totalFees,
+      winRate,
+      totalTrades: dayTrades.length,
+      winningTrades,
+      losingTrades
+    }
+  }
+
   return {
     tradeOrders,
     loading,
     error,
     getDailyPerformances,
     getTradeStats,
+    getTradesForDay,
+    getDayStats,
     refetch: fetchTradeOrders
   }
 }
