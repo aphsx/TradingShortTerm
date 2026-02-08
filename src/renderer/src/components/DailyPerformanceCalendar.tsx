@@ -5,7 +5,7 @@ import { DayDetailModal } from './DayDetailModal'
 const DailyPerformanceCalendar: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const { getDailyPerformances, getTradeStats, getTradesForDay, getDayStats, loading, error, tradeOrders } = useTradeOrders()
+  const { getDailyPerformances, getTradeStats, getTradesForDay, getDayStats, getAnalysisForDay, loading, error, tradeOrders } = useTradeOrders()
   
   if (loading) {
     return (
@@ -220,6 +220,7 @@ const DailyPerformanceCalendar: React.FC = () => {
           date={selectedDate}
           trades={getTradesForDay(selectedDate)}
           dayStats={getDayStats(selectedDate)}
+          analysisData={getAnalysisForDay(selectedDate)}
         />
       )}
     </>

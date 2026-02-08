@@ -1,33 +1,46 @@
 import { useState, useEffect } from 'react'
-import { supabase, TradeOrder, DailyPerformance } from '../lib/supabase'
+import { supabase, TradeOrder, MarketAnalysisLog, DailyPerformance } from '../lib/supabase'
 
 export const useTradeOrders = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [tradeOrders, setTradeOrders] = useState<TradeOrder[]>([])
+  const [marketAnalysis, setMarketAnalysis] = useState<MarketAnalysisLog[]>([])
 
   useEffect(() => {
-    fetchTradeOrders()
+    fetchData()
   }, [])
 
-  const fetchTradeOrders = async () => {
+  const fetchData = async () => {
     try {
       setLoading(true)
       setError(null)
 
-      const { data, error: fetchError } = await supabase
+      // Fetch trade orders
+      const { data: tradesData, error: tradesError } = await supabase
         .from('trade_orders')
         .select('*')
         .order('entry_time', { ascending: false })
 
-      if (fetchError) {
-        throw fetchError
+      if (tradesError) {
+        throw tradesError
       }
 
-      setTradeOrders(data || [])
+      // Fetch market analysis logs
+      const { data: analysisData, error: analysisError } = await supabase
+        .from('market_analysis_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (analysisError) {
+        throw analysisError
+      }
+
+      setTradeOrders(tradesData || [])
+      setMarketAnalysis(analysisData || [])
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch trade orders')
-      console.error('Error fetching trade orders:', err)
+      setError(err instanceof Error ? err.message : 'Failed to fetch data')
+      console.error('Error fetching data:', err)
     } finally {
       setLoading(false)
     }
@@ -73,7 +86,7 @@ export const useTradeOrders = () => {
     }, {} as Record<string, { trades: TradeOrder[], totalPnl: number, symbols: Set<string> }>)
 
     // Update performances with actual trade data
-    performances.forEach(performance => {
+    performances.forEach((performance) => {
       const dayData = tradesByDate[performance.date]
       if (dayData) {
         performance.fills = dayData.trades.length
@@ -160,14 +173,23 @@ export const useTradeOrders = () => {
     }
   }
 
+  const getAnalysisForDay = (date: string) => {
+    return marketAnalysis.filter(analysis => {
+      const analysisDate = new Date(analysis.created_at).toISOString().split('T')[0]
+      return analysisDate === date
+    })
+  }
+
   return {
     tradeOrders,
+    marketAnalysis,
     loading,
     error,
     getDailyPerformances,
     getTradeStats,
     getTradesForDay,
     getDayStats,
-    refetch: fetchTradeOrders
+    getAnalysisForDay,
+    refetch: fetchData
   }
 }

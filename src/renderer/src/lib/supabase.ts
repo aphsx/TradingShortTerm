@@ -30,6 +30,17 @@ export interface TradeOrder {
   net_pnl?: number
 }
 
+export interface MarketAnalysisLog {
+  id: string
+  created_at: string
+  technical_summary?: string
+  sentiment_summary?: string
+  onchain_summary?: string
+  final_analysis?: string
+  confidence_score?: number
+  action_taken?: string
+}
+
 export interface DailyPerformance {
   date: string
   fills: number
