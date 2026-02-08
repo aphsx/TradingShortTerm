@@ -1,6 +1,6 @@
 import React from 'react'
-import { X, TrendingUp, TrendingDown, Clock, DollarSign, Target, Activity } from 'lucide-react'
-import { TradeOrder } from '../lib/supabase'
+import { X, TrendingUp, TrendingDown, Clock, DollarSign, Target, Activity, Brain, BarChart3, TrendingUp as TrendingIcon } from 'lucide-react'
+import { TradeOrder, MarketAnalysisLog } from '../lib/supabase'
 
 interface DayDetailModalProps {
   isOpen: boolean
@@ -16,6 +16,7 @@ interface DayDetailModalProps {
     winningTrades: number
     losingTrades: number
   }
+  analysisData: MarketAnalysisLog[]
 }
 
 const DayDetailModal: React.FC<DayDetailModalProps> = ({
