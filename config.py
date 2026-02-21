@@ -8,6 +8,9 @@ SECRET_KEY = os.getenv("BINANCE_API_SECRET", os.getenv("BINANCE_SECRET_KEY", "")
 TESTNET_ENV = os.getenv("BINANCE_USE_TESTNET", os.getenv("BINANCE_TESTNET", "true"))
 TESTNET = TESTNET_ENV.lower() == "true"
 
+BINANCE_FUTURES_REST_URL = os.getenv("BINANCE_FUTURES_REST_URL", "")
+BINANCE_FUTURES_WS_URL = os.getenv("BINANCE_FUTURES_WS_URL", "")
+
 TRADING_PAIRS = os.getenv("TRADING_PAIRS", "BTCUSDT,ETHUSDT").split(",")
 BASE_BALANCE = float(os.getenv("BASE_BALANCE", "500"))
 MAX_LEVERAGE = int(os.getenv("MAX_LEVERAGE", "12"))

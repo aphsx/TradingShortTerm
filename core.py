@@ -83,17 +83,9 @@ class RiskManager:
         }
 
 class Executor:
-    def __init__(self, binance_client=None, testnet=True):
-        self.client = binance_client # original WebSockets client
+    def __init__(self, exchange_instance, testnet=True):
+        self.exchange = exchange_instance
         self.testnet = testnet
-        self.exchange = ccxt.binance({
-            'apiKey': API_KEY,
-            'secret': SECRET_KEY,
-            'options': {'defaultType': 'future'},
-            'enableRateLimit': True
-        })
-        if self.testnet:
-            self.exchange.set_sandbox_mode(True)
         
     async def execute_trade(self, symbol, decision, risk_params, current_price):
         if decision['action'] == "NO_TRADE":

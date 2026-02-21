@@ -1,4 +1,3 @@
-python-binance
 websockets
 asyncio
 redis
