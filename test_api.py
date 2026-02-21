@@ -23,14 +23,14 @@ async def test_api():
     # Custom Override checking just like main.py
     from config import BINANCE_FUTURES_REST_URL
     if BINANCE_FUTURES_REST_URL:
+        base_url = BINANCE_FUTURES_REST_URL.rstrip('/')
         exchange_config['urls'] = {
             'api': {
-                'public': BINANCE_FUTURES_REST_URL.rstrip('/') + '/fapi/v1',
-                'private': BINANCE_FUTURES_REST_URL.rstrip('/') + '/fapi/v1',
-            },
-            'test': {
-                'public': BINANCE_FUTURES_REST_URL.rstrip('/') + '/fapi/v1',
-                'private': BINANCE_FUTURES_REST_URL.rstrip('/') + '/fapi/v1',
+                'public': base_url + '/fapi/v1',
+                'private': base_url + '/fapi/v1',
+                'fapiPublic': base_url + '/fapi/v1',
+                'fapiPrivate': base_url + '/fapi/v1',
+                'fapiPrivateV2': base_url + '/fapi/v2',
             }
         }
         

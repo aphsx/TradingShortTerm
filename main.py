@@ -33,22 +33,21 @@ class VortexBot:
         
         # Override URLs if user specified them in .env
         if BINANCE_FUTURES_REST_URL:
+            base_url = BINANCE_FUTURES_REST_URL.rstrip('/')
             exchange_config['urls'] = {
                 'api': {
-                    'public': BINANCE_FUTURES_REST_URL.rstrip('/') + '/fapi/v1',
-                    'private': BINANCE_FUTURES_REST_URL.rstrip('/') + '/fapi/v1',
-                },
-                'test': {
-                    'public': BINANCE_FUTURES_REST_URL.rstrip('/') + '/fapi/v1',
-                    'private': BINANCE_FUTURES_REST_URL.rstrip('/') + '/fapi/v1',
+                    'public': base_url + '/fapi/v1',
+                    'private': base_url + '/fapi/v1',
+                    'fapiPublic': base_url + '/fapi/v1',
+                    'fapiPrivate': base_url + '/fapi/v1',
+                    'fapiPrivateV2': base_url + '/fapi/v2',
                 }
             }
             
         self.exchange = ccxtpro.binance(exchange_config)
         
         if TESTNET:
-            print("🚀 Configuring Testnet Sandbox Mode on CCXT")
-            self.exchange.set_sandbox_mode(True)
+            print("🚀 Connecting to Binance Futures Testnet/Mock Trading")
             
         self.executor = Executor(exchange_instance=self.exchange, testnet=TESTNET)
         # Prepare trading symbols for CCXT format (e.g., BTCUSDT -> BTC/USDT:USDT or BTC/USDT)
