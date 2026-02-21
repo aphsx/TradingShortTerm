@@ -13,31 +13,16 @@ async def test_api():
     exchange_config = {
         'apiKey': API_KEY,
         'secret': SECRET_KEY,
-        'options': {
-            'defaultType': 'future',
-            'warnOnFetchOpenOrdersWithoutSymbol': False
-        },
         'enableRateLimit': True
     }
     
-    # Custom Override checking just like main.py
-    from config import BINANCE_FUTURES_REST_URL
-    if BINANCE_FUTURES_REST_URL:
-        base_url = BINANCE_FUTURES_REST_URL.rstrip('/')
-        exchange_config['urls'] = {
-            'api': {
-                'public': base_url + '/fapi/v1',
-                'private': base_url + '/fapi/v1',
-                'fapiPublic': base_url + '/fapi/v1',
-                'fapiPrivate': base_url + '/fapi/v1',
-                'fapiPrivateV2': base_url + '/fapi/v2',
-            }
-        }
-        
-    exchange = ccxtpro.binance(exchange_config)
+    # Use binanceusdm instead of general binance to skip Spot completely
+    exchange = ccxtpro.binanceusdm(exchange_config)
     
+    # CCXT introduced enable_demo_trading for Binance specifically
     if TESTNET:
-        print("[INFO] Passing Mock Trading Testnet via URL Overrides (bypassing CCXT sandbox deprecation error)")
+        print("[INFO] CCXT Binance Demo Trading (Mock) Enabled!")
+        exchange.enable_demo_trading(True)
         
     try:
         # TEST 1: Check Balances
@@ -55,7 +40,7 @@ async def test_api():
             print("⚠️ Warning: Your Free USDT is very low or 0. Order tests might fail with Insufficient Margin.")
             
         # TEST 2: Mock an Order on BTC/USDT Linear Futures
-        symbol = 'BTC/USDT'
+        symbol = 'BTC/USDT:USDT'
         print(f"\n⏳ [2/2] Fetching current price for {symbol} to mock an order...")
         ticker = await exchange.fetch_ticker(symbol)
         current_price = ticker['last']

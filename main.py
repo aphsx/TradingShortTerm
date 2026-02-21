@@ -18,44 +18,25 @@ class VortexBot:
         self.decision = DecisionEngine()
         self.risk = RiskManager()
         
-        from config import BINANCE_FUTURES_REST_URL, BINANCE_FUTURES_WS_URL
-        
-        # Initialize CCXT Pro Exchange (supports REST and WebSockets natively)
+        # Initialize CCXT Pro using the specific Futures exchange class
         exchange_config = {
             'apiKey': API_KEY,
             'secret': SECRET_KEY,
-            'options': {
-                'defaultType': 'future',
-                'warnOnFetchOpenOrdersWithoutSymbol': False
-            },
             'enableRateLimit': True
         }
-        
-        # Override URLs if user specified them in .env
-        if BINANCE_FUTURES_REST_URL:
-            base_url = BINANCE_FUTURES_REST_URL.rstrip('/')
-            exchange_config['urls'] = {
-                'api': {
-                    'public': base_url + '/fapi/v1',
-                    'private': base_url + '/fapi/v1',
-                    'fapiPublic': base_url + '/fapi/v1',
-                    'fapiPrivate': base_url + '/fapi/v1',
-                    'fapiPrivateV2': base_url + '/fapi/v2',
-                }
-            }
             
-        self.exchange = ccxtpro.binance(exchange_config)
+        self.exchange = ccxtpro.binanceusdm(exchange_config)
         
         if TESTNET:
-            print("🚀 Connecting to Binance Futures Testnet/Mock Trading")
+            print("🚀 Connecting to Binance Futures Demo Trading (CCXT Natively Supported)")
+            self.exchange.enable_demo_trading(True)
             
         self.executor = Executor(exchange_instance=self.exchange, testnet=TESTNET)
-        # Prepare trading symbols for CCXT format (e.g., BTCUSDT -> BTC/USDT:USDT or BTC/USDT)
-        # Linear futures on CCXT Binance typically use BASE/QUOTE
-        self.ccxt_symbols = [s.replace('USDT', '/USDT') for s in TRADING_PAIRS]
+        # For ccxt.binanceusdm, Linear Futures use BASE/QUOTE:SETTLE standard (BTC/USDT:USDT)
+        self.ccxt_symbols = [f"{s.replace('USDT', '')}/USDT:USDT" for s in TRADING_PAIRS]
 
     async def watch_ob_for_symbol(self, symbol):
-        raw_sym = symbol.replace('/', '')
+        raw_sym = symbol.replace('/', '').replace(':USDT', '')
         while True:
             try:
                 ob = await self.exchange.watch_order_book(symbol)
@@ -70,7 +51,7 @@ class VortexBot:
                 await asyncio.sleep(2)
 
     async def watch_tr_for_symbol(self, symbol):
-        raw_sym = symbol.replace('/', '')
+        raw_sym = symbol.replace('/', '').replace(':USDT', '')
         while True:
             try:
                 trades = await self.exchange.watch_trades(symbol)
@@ -85,7 +66,7 @@ class VortexBot:
                 await asyncio.sleep(2)
                 
     async def watch_klines_for_symbol(self, symbol, timeframe='1m'):
-        raw_sym = symbol.replace('/', '')
+        raw_sym = symbol.replace('/', '').replace(':USDT', '')
         while True:
             try:
                 klines = await self.exchange.watch_ohlcv(symbol, timeframe)
@@ -102,7 +83,7 @@ class VortexBot:
         while True:
             try:
                 for symbol in self.ccxt_symbols:
-                    raw_sym = symbol.replace('/', '')
+                    raw_sym = symbol.replace('/', '').replace(':USDT', '')
                     ob = self.storage.get_orderbook(raw_sym)
                     ticks = self.storage.get_ticks(raw_sym)
                     
