@@ -53,6 +53,13 @@ class DataStorage:
         signals = self.r.hgetall(f"engine_signals:{symbol}")
         return {k: json.loads(v) for k, v in signals.items()}
 
+    def set_klines(self, symbol, timeframe, data):
+        self.r.set(f"klines:{symbol}:{timeframe}", json.dumps(data))
+        
+    def get_klines(self, symbol, timeframe):
+        v = self.r.get(f"klines:{symbol}:{timeframe}")
+        return json.loads(v) if v else []
+
     # --- Supabase Cold Data ---
     def save_trade(self, trade_data):
         if self.supabase:

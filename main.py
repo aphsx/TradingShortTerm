@@ -84,6 +84,19 @@ class VortexBot:
             except Exception as e:
                 print(f"WS TR {symbol} Error: {e}")
                 await asyncio.sleep(2)
+                
+    async def watch_klines_for_symbol(self, symbol, timeframe='1m'):
+        raw_sym = symbol.replace('/', '')
+        while True:
+            try:
+                klines = await self.exchange.watch_ohlcv(symbol, timeframe)
+                # Store the most recent 100 candles locally
+                self.storage.set_klines(raw_sym, timeframe, klines[-100:])
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"WS Kline {symbol} Error: {e}")
+                await asyncio.sleep(2)
 
     async def trade_loop(self):
         print("Trading loop started...")
@@ -94,11 +107,8 @@ class VortexBot:
                     ob = self.storage.get_orderbook(raw_sym)
                     ticks = self.storage.get_ticks(raw_sym)
                     
-                    try:
-                        kline_data = await self.exchange.fetch_ohlcv(symbol, timeframe='1m', limit=30)
-                        klines = kline_data 
-                    except Exception as e:
-                        klines = []
+                    # Fast local memory access (0ms latency, Zero API limit hit)
+                    klines = self.storage.get_klines(raw_sym, '1m')
                         
                     s1 = self.e1.process(ob, ticks)
                     s2 = self.e2.process(ticks)
@@ -157,6 +167,7 @@ class VortexBot:
         for sym in self.ccxt_symbols:
             loop_tasks.append(asyncio.create_task(self.watch_ob_for_symbol(sym)))
             loop_tasks.append(asyncio.create_task(self.watch_tr_for_symbol(sym)))
+            loop_tasks.append(asyncio.create_task(self.watch_klines_for_symbol(sym, '1m')))
         
         loop_tasks.append(asyncio.create_task(self.trade_loop()))
         
