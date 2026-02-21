@@ -23,7 +23,7 @@ class DecisionEngine:
         final_score = s1*w1 + s2*w2 + s3*w3 + s4*w4
         
         if abs(final_score) < 0.55 or not e5_filter.get('tradeable', True):
-            return {"action": "NO_TRADE"}
+            return {"action": "NO_TRADE", "final_score": final_score}
             
         action = "LONG" if final_score > 0 else "SHORT"
         
@@ -35,7 +35,7 @@ class DecisionEngine:
         best_strategy = max(strategies, key=lambda x: x[1])
         
         if best_strategy[1] < 0.4:
-            return {"action": "NO_TRADE"}
+            return {"action": "NO_TRADE", "final_score": final_score}
             
         return {
             "action": action,
@@ -72,10 +72,11 @@ class RiskManager:
         }
 
 class Executor:
-    def __init__(self, binance_client=None):
+    def __init__(self, binance_client=None, testnet=True):
         self.client = binance_client
+        self.testnet = testnet
         
-    def execute_trade(self, symbol, decision, risk_params, current_price):
+    async def execute_trade(self, symbol, decision, risk_params, current_price):
         if decision['action'] == "NO_TRADE":
             return None
             
@@ -86,18 +87,42 @@ class Executor:
         sl_price = entry_price + risk_params['sl_distance'] if side == "SHORT" else entry_price - risk_params['sl_distance']
         tp_price = entry_price - risk_params['tp1_distance'] if side == "SHORT" else entry_price + risk_params['tp1_distance']
         
+        # Determine precision based on symbol (approximate mapping for simplicity)
+        qty_precision = 3 if symbol == "BTCUSDT" else 2 if "ETH" in symbol else 0
+        price_precision = 1 if symbol == "BTCUSDT" else 2 if "ETH" in symbol else 4
+        
         order_details = {
             "symbol": symbol,
             "side": side,
             "type": "LIMIT",
             "timeInForce": "GTX",
-            "quantity": round(pos_size, 3),
-            "price": round(entry_price, 2),
-            "sl_price": round(sl_price, 2),
-            "tp_price": round(tp_price, 2),
+            "quantity": round(pos_size, qty_precision),
+            "price": round(entry_price, price_precision),
+            "sl_price": round(sl_price, price_precision),
+            "tp_price": round(tp_price, price_precision),
             "strategy": decision['strategy']
         }
         
-        # Here we would send order to binance API
-        print(f"Sending order to Binance: {order_details}")
+        if self.client:
+            try:
+                print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Adjusting leverage to {int(risk_params['leverage'])}x for {symbol}...")
+                await self.client.futures_change_leverage(symbol=symbol, leverage=int(risk_params['leverage']))
+                
+                print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Sending {side} order ({order_details['quantity']} @ {order_details['price']})...")
+                res = await self.client.futures_create_order(
+                    symbol=symbol,
+                    side=side,
+                    type='LIMIT',
+                    timeInForce='GTX',
+                    quantity=order_details["quantity"],
+                    price=order_details["price"]
+                )
+                print(f"✅ Order Executed Successfully! Order ID: {res.get('orderId')}")
+                # You could also send SL and TP orders here automatically!
+            except Exception as e:
+                print(f"❌ API Error sending order: {e}")
+                return None
+        else:
+            print(f"🔥 [SIMULATED] order to Binance: {order_details}")
+            
         return order_details
