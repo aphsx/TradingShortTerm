@@ -6,6 +6,17 @@ CREATE TABLE trades (
     symbol VARCHAR(20) NOT NULL,
     side VARCHAR(5) NOT NULL,          -- 'LONG' or 'SHORT'
     strategy CHAR(1) NOT NULL,         -- 'A', 'B', or 'C'
+    
+    -- API & Execution Analytics (Detailed Logs)
+    order_id VARCHAR(50),              -- BNB/Exchange assigned Order ID
+    client_order_id VARCHAR(50),       -- Our custom ID
+    execution_type VARCHAR(20),        -- 'LIMIT', 'MARKET', etc.
+    api_latency_ms INTEGER,            -- How long did CCXT request take?
+    status VARCHAR(20) DEFAULT 'NEW',  -- 'SUCCESS', 'REJECTED', 'CANCELED', 'API_ERROR'
+    error_type VARCHAR(50),            -- CCXT Exception type (e.g., NetworkError, InsufficientFunds)
+    error_msg TEXT,                    -- Full error dump
+    
+    -- Price & Position Details
     entry_price DECIMAL(18,8) NOT NULL,
     exit_price DECIMAL(18,8),
     size_usdt DECIMAL(18,2) NOT NULL,
@@ -13,6 +24,8 @@ CREATE TABLE trades (
     sl_price DECIMAL(18,8) NOT NULL,
     tp1_price DECIMAL(18,8) NOT NULL,
     tp2_price DECIMAL(18,8),
+    
+    -- Trade Lifecycle & Returns
     pnl_gross DECIMAL(18,4),
     fee_total DECIMAL(18,4),
     pnl_net DECIMAL(18,4),
@@ -20,15 +33,13 @@ CREATE TABLE trades (
     engine_signals JSONB,              -- snapshot of signals upon entry 
     final_score DECIMAL(5,4),
     hold_duration_sec INTEGER,
-    exit_reason VARCHAR(30),           -- 'TP1', 'TP2', 'SL', 'TIMEOUT', 'MANUAL', 'EMERGENCY'
-    maker_fills INTEGER,               -- Number of fills as maker
-    taker_fills INTEGER,               -- Number of fills as taker
+    exit_reason VARCHAR(30),           -- 'TP1', 'TP2', 'SL', 'TIMEOUT'
+    maker_fills INTEGER,
+    taker_fills INTEGER,
     entry_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     exit_time TIMESTAMPTZ,
     regime_at_entry VARCHAR(20),
-    vol_phase_at_entry VARCHAR(20),
-    status VARCHAR(15) DEFAULT 'SUCCESS',
-    error_msg TEXT
+    vol_phase_at_entry VARCHAR(20)
 );
 
 -- Index for analytics and faster query

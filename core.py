@@ -116,9 +116,16 @@ class Executor:
             "error_msg": ""
         }
         
+        import time
+        start_time = time.time()
         try:
             print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Adjusting leverage to {int(risk_params['leverage'])}x for {symbol}...")
-            ccxt_symbol = symbol.replace('USDT', '/USDT')
+            # For binanceusdm module, it often requires the format BTC/USDT:USDT.
+            if ":" not in symbol:
+                 ccxt_symbol = f"{symbol.replace('USDT', '')}/USDT:USDT"
+            else:
+                 ccxt_symbol = symbol
+                 
             await self.exchange.set_leverage(int(risk_params['leverage']), ccxt_symbol)
             
             ccxt_side = 'buy' if side == 'LONG' else 'sell'
@@ -131,18 +138,27 @@ class Executor:
                 side=ccxt_side,
                 amount=order_details["quantity"],
                 price=order_details["price"],
-                params={'timeInForce': 'GTX'}
+                params={'timeInForce': 'GTX', 'clientOrderId': f"V7_{int(time.time()*1000)}"}
             )
             
-            order_id = res.get('id')
-            print(f"✅ CCXT Order Executed! Order ID: {order_id}")
-            order_details["orderId"] = order_id
+            latency = int((time.time() - start_time) * 1000)
+            order_details["api_latency_ms"] = latency
+            order_details["order_id"] = str(res.get('id', ''))
+            order_details["client_order_id"] = str(res.get('clientOrderId', ''))
+            order_details["status"] = "SUCCESS"
+            order_details["execution_type"] = ord_type
+            
+            print(f"✅ CCXT Order Executed in {latency}ms! Order ID: {order_details['order_id']}")
             order_logger.info(f"SUCCESS | {json.dumps(order_details)}")
             
         except Exception as e:
-            print(f"❌ CCXT Error sending order: {e}")
-            order_details["status"] = "FAILED"
+            latency = int((time.time() - start_time) * 1000)
+            print(f"❌ CCXT Error sending order after {latency}ms: {e}")
+            order_details["api_latency_ms"] = latency
+            order_details["status"] = "API_ERROR"
+            order_details["error_type"] = type(e).__name__
             order_details["error_msg"] = str(e)
+            order_details["execution_type"] = "limit"
             order_logger.error(f"FAILED | Error: {str(e)} | Details: {json.dumps(order_details)}")
             
         return order_details

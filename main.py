@@ -118,18 +118,28 @@ class VortexBot:
                             if order:
                                 if order.get("status", "SUCCESS") == "SUCCESS":
                                     self.storage.set_position(raw_sym, order)
-                                # Save to Supabase (Record all outcomes)
+                                # Save to Supabase (Granular Order/Execution Metrics)
                                 self.storage.save_trade({
-                                    "symbol": order["symbol"],
-                                    "side": order["side"],
-                                    "strategy": order["strategy"],
-                                    "size_usdt": order["quantity"] * order["price"],
-                                    "entry_price": order["price"],
-                                    "sl_price": order["sl_price"],
-                                    "tp1_price": order["tp_price"],
-                                    "leverage": risk_params["leverage"],
-                                    "status": order.get("status", "SUCCESS"),
-                                    "error_msg": order.get("error_msg", "")
+                                    "symbol": order.get("symbol", raw_sym),
+                                    "side": order.get("side", dec["action"]),
+                                    "strategy": order.get("strategy", dec["strategy"]),
+                                    
+                                    "order_id": order.get("order_id"),
+                                    "client_order_id": order.get("client_order_id"),
+                                    "execution_type": order.get("execution_type"),
+                                    "api_latency_ms": order.get("api_latency_ms"),
+                                    "status": order.get("status"),
+                                    "error_type": order.get("error_type"),
+                                    "error_msg": order.get("error_msg"),
+                                    
+                                    "entry_price": order.get("price", 0),
+                                    "size_usdt": order.get("quantity", 0) * order.get("price", 0),
+                                    "leverage": risk_params.get("leverage", 1),
+                                    "sl_price": order.get("sl_price", 0),
+                                    "tp1_price": order.get("tp_price", 0),
+                                    
+                                    "confidence": dec.get("confidence", 0),
+                                    "final_score": dec.get("final_score", 0)
                                 })
             except asyncio.CancelledError:
                 break
