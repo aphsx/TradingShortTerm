@@ -107,11 +107,11 @@ class Executor:
             try:
                 print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Adjusting leverage to {int(risk_params['leverage'])}x for {symbol}...")
                 await self.client.futures_change_leverage(symbol=symbol, leverage=int(risk_params['leverage']))
-                
-                print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Sending {side} order ({order_details['quantity']} @ {order_details['price']})...")
+                api_side = "BUY" if side == "LONG" else "SELL"
+                print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Sending {side} ({api_side}) order ({order_details['quantity']} @ {order_details['price']})...")
                 res = await self.client.futures_create_order(
                     symbol=symbol,
-                    side=side,
+                    side=api_side,
                     type='LIMIT',
                     timeInForce='GTX',
                     quantity=order_details["quantity"],
