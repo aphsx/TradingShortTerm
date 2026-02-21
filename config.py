@@ -4,8 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 API_KEY = os.getenv("BINANCE_API_KEY", "")
-SECRET_KEY = os.getenv("BINANCE_SECRET_KEY", "")
-TESTNET = os.getenv("BINANCE_TESTNET", "true").lower() == "true"
+SECRET_KEY = os.getenv("BINANCE_API_SECRET", os.getenv("BINANCE_SECRET_KEY", ""))
+TESTNET_ENV = os.getenv("BINANCE_USE_TESTNET", os.getenv("BINANCE_TESTNET", "true"))
+TESTNET = TESTNET_ENV.lower() == "true"
 
 TRADING_PAIRS = os.getenv("TRADING_PAIRS", "BTCUSDT,ETHUSDT").split(",")
 BASE_BALANCE = float(os.getenv("BASE_BALANCE", "500"))

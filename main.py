@@ -76,7 +76,8 @@ class VortexBot:
                             risk_params = self.risk.calculate(dec, price, s3.get('atr', 0), s5.get('param_overrides', {}))
                             order = await self.executor.execute_trade(symbol, dec, risk_params, price)
                             if order:
-                                self.storage.set_position(symbol, order)
+                                if order.get("status", "SUCCESS") == "SUCCESS":
+                                    self.storage.set_position(symbol, order)
                                 # Save to Supabase
                                 self.storage.save_trade({
                                     "symbol": order["symbol"],
@@ -86,7 +87,9 @@ class VortexBot:
                                     "entry_price": order["price"],
                                     "sl_price": order["sl_price"],
                                     "tp1_price": order["tp_price"],
-                                    "leverage": risk_params["leverage"]
+                                    "leverage": risk_params["leverage"],
+                                    "status": order.get("status", "SUCCESS"),
+                                    "error_msg": order.get("error_msg", "")
                                 })
             except Exception as e:
                 print(f"Trade Loop Error: {e}")

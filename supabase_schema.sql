@@ -26,7 +26,9 @@ CREATE TABLE trades (
     entry_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     exit_time TIMESTAMPTZ,
     regime_at_entry VARCHAR(20),
-    vol_phase_at_entry VARCHAR(20)
+    vol_phase_at_entry VARCHAR(20),
+    status VARCHAR(15) DEFAULT 'SUCCESS',
+    error_msg TEXT
 );
 
 -- Index for analytics and faster query

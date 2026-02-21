@@ -1,5 +1,16 @@
-from config import BASE_BALANCE, RISK_PER_TRADE, MAX_LEVERAGE
+import logging
+import json
+import ccxt.async_support as ccxt
+from config import BASE_BALANCE, RISK_PER_TRADE, MAX_LEVERAGE, API_KEY, SECRET_KEY
 from strategies import StrategyA, StrategyB, StrategyC
+
+# Configure Order Logger (Save orders to file)
+order_logger = logging.getLogger("OrderLogger")
+order_logger.setLevel(logging.INFO)
+if not order_logger.handlers:
+    fh = logging.FileHandler("orders.log", encoding="utf-8")
+    fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    order_logger.addHandler(fh)
 
 class DecisionEngine:
     def evaluate(self, signals, e5_filter):
@@ -73,8 +84,16 @@ class RiskManager:
 
 class Executor:
     def __init__(self, binance_client=None, testnet=True):
-        self.client = binance_client
+        self.client = binance_client # original WebSockets client
         self.testnet = testnet
+        self.exchange = ccxt.binance({
+            'apiKey': API_KEY,
+            'secret': SECRET_KEY,
+            'options': {'defaultType': 'future'},
+            'enableRateLimit': True
+        })
+        if self.testnet:
+            self.exchange.set_sandbox_mode(True)
         
     async def execute_trade(self, symbol, decision, risk_params, current_price):
         if decision['action'] == "NO_TRADE":
@@ -100,29 +119,38 @@ class Executor:
             "price": round(entry_price, price_precision),
             "sl_price": round(sl_price, price_precision),
             "tp_price": round(tp_price, price_precision),
-            "strategy": decision['strategy']
+            "strategy": decision['strategy'],
+            "status": "SUCCESS",
+            "error_msg": ""
         }
         
-        if self.client:
-            try:
-                print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Adjusting leverage to {int(risk_params['leverage'])}x for {symbol}...")
-                await self.client.futures_change_leverage(symbol=symbol, leverage=int(risk_params['leverage']))
-                api_side = "BUY" if side == "LONG" else "SELL"
-                print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Sending {side} ({api_side}) order ({order_details['quantity']} @ {order_details['price']})...")
-                res = await self.client.futures_create_order(
-                    symbol=symbol,
-                    side=api_side,
-                    type='LIMIT',
-                    timeInForce='GTX',
-                    quantity=order_details["quantity"],
-                    price=order_details["price"]
-                )
-                print(f"✅ Order Executed Successfully! Order ID: {res.get('orderId')}")
-                # You could also send SL and TP orders here automatically!
-            except Exception as e:
-                print(f"❌ API Error sending order: {e}")
-                return None
-        else:
-            print(f"🔥 [SIMULATED] order to Binance: {order_details}")
+        try:
+            print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Adjusting leverage to {int(risk_params['leverage'])}x for {symbol}...")
+            ccxt_symbol = symbol.replace('USDT', '/USDT')
+            await self.exchange.set_leverage(int(risk_params['leverage']), ccxt_symbol)
+            
+            ccxt_side = 'buy' if side == 'LONG' else 'sell'
+            ord_type = 'limit'
+            print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] CCXT Sending {side} ({ccxt_side}) {ord_type} order ({order_details['quantity']} @ {order_details['price']})...")
+            
+            res = await self.exchange.create_order(
+                symbol=ccxt_symbol,
+                type=ord_type,
+                side=ccxt_side,
+                amount=order_details["quantity"],
+                price=order_details["price"],
+                params={'timeInForce': 'GTX'}
+            )
+            
+            order_id = res.get('id')
+            print(f"✅ CCXT Order Executed! Order ID: {order_id}")
+            order_details["orderId"] = order_id
+            order_logger.info(f"SUCCESS | {json.dumps(order_details)}")
+            
+        except Exception as e:
+            print(f"❌ CCXT Error sending order: {e}")
+            order_details["status"] = "FAILED"
+            order_details["error_msg"] = str(e)
+            order_logger.error(f"FAILED | Error: {str(e)} | Details: {json.dumps(order_details)}")
             
         return order_details
