@@ -423,7 +423,7 @@ class Executor:
             # Trade-off: Order may not fill if price doesn't reach our level
             logger.info(f"[{'TESTNET' if self.testnet else 'LIVE'}] Placing POST-ONLY {side} limit @ {order_details['price']:.2f}")
 
-            # Create order with timeout protection (prevent hanging)
+            # Create entry order with timeout protection
             res = await asyncio.wait_for(
                 self.exchange.create_order(
                     symbol=ccxt_symbol,
@@ -433,7 +433,7 @@ class Executor:
                     price=order_details["price"],
                     params={'timeInForce': 'GTX', 'clientOrderId': f"V7_{int(time.time()*1000)}"}
                 ),
-                timeout=10.0  # 10 second timeout for order placement
+                timeout=10.0
             )
             
             latency = int((time.time() - start_time) * 1000)
@@ -445,6 +445,53 @@ class Executor:
             
             logger.info(f"Order executed in {latency}ms! Order ID: {order_details['order_id']}")
             order_logger.info(f"SUCCESS | {json.dumps(order_details)}")
+
+            # === EXCHANGE-SIDE SL/TP PROTECTION ===
+            # Place SL and TP as separate orders on the exchange
+            # This protects the position even if the bot crashes
+            sl_side = 'sell' if side == 'LONG' else 'buy'
+            
+            try:
+                # Stop Loss (STOP_MARKET)
+                await asyncio.wait_for(
+                    self.exchange.create_order(
+                        symbol=ccxt_symbol,
+                        type='stop_market',
+                        side=sl_side,
+                        amount=order_details["quantity"],
+                        params={
+                            'stopPrice': order_details["sl_price"],
+                            'reduceOnly': True,
+                            'clientOrderId': f"V7SL_{int(time.time()*1000)}"
+                        }
+                    ),
+                    timeout=5.0
+                )
+                logger.info(f"🛡️ SL placed @ {order_details['sl_price']:.2f}")
+            except Exception as sl_err:
+                logger.warning(f"⚠️ Failed to place SL order: {sl_err}")
+                order_details["sl_status"] = "FAILED"
+
+            try:
+                # Take Profit (TAKE_PROFIT_MARKET)
+                await asyncio.wait_for(
+                    self.exchange.create_order(
+                        symbol=ccxt_symbol,
+                        type='take_profit_market',
+                        side=sl_side,
+                        amount=order_details["quantity"],
+                        params={
+                            'stopPrice': order_details["tp_price"],
+                            'reduceOnly': True,
+                            'clientOrderId': f"V7TP_{int(time.time()*1000)}"
+                        }
+                    ),
+                    timeout=5.0
+                )
+                logger.info(f"🎯 TP placed @ {order_details['tp_price']:.2f}")
+            except Exception as tp_err:
+                logger.warning(f"⚠️ Failed to place TP order: {tp_err}")
+                order_details["tp_status"] = "FAILED"
             
         except Exception as e:
             latency = int((time.time() - start_time) * 1000)
