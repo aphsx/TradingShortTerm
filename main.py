@@ -265,7 +265,13 @@ class VortexBot:
                             if risk_params is not None and risk_params.get("action") == "NO_TRADE":
                                 print(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | SKIP: {risk_params.get('reason')}")
                                 continue
-                                
+
+                            # --- POSITION GUARD: Prevent duplicate trades ---
+                            existing_position = self.storage.get_position(raw_sym)
+                            if existing_position:
+                                print(f"⚠ SKIP: {raw_sym} already has open position: {existing_position.get('side')} @ {existing_position.get('price')}")
+                                continue
+
                             # --- ACTUAL TRADE ATTEMPT ---
                             # จุดนี้คือจุดที่ Bot "ตัดสินใจยิงจริง" จะบันทึกข้อมูลลง Database เฉพาะที่จุดนี้
                             order = await self.executor.execute_trade(raw_sym, dec, risk_params, price)
