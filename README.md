@@ -66,6 +66,17 @@ TRADING_PAIRS=BTCUSDT,ETHUSDT,SOLUSDT
 python main.py
 ```
 
+### 5. Rust Backtester 🦀
+For high-performance backtesting using the **Nautilus Trader Rust SDK**, use the `rust_backtest` module:
+```bash
+cd rust_backtest
+cargo run
+```
+This will automatically:
+- Download historical `aggTrades` from Binance.
+- Cache them as **Parquet** files for ultra-fast loading.
+- Run a simulation using the Nautilus event-driven engine.
+
 ---
 
 ## 📄 Documentation | เอกสารประกอบ
