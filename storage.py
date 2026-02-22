@@ -60,6 +60,14 @@ class DataStorage:
         v = self.r.get(f"klines:{symbol}:{timeframe}")
         return json.loads(v) if v else []
 
+    def set_sentiment(self, symbol, data):
+        self.r.hset(f"sentiment:{symbol}", mapping=data)
+        
+    def get_sentiment(self, symbol):
+        data = self.r.hgetall(f"sentiment:{symbol}")
+        # Convert strings back to floats
+        return {k: float(v) for k, v in data.items()} if data else {}
+
     # --- Supabase Cold Data ---
     def save_trade(self, trade_data):
         if self.supabase:

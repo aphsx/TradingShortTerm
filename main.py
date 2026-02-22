@@ -75,8 +75,61 @@ class VortexBot:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"WS Kline {symbol} Error: {e}")
+                print(f"WS Kline {symbol} {timeframe} Error: {e}")
                 await asyncio.sleep(2)
+
+    async def poll_sentiment_data(self, symbol):
+        """Polls REST endpoints every 30 seconds for Engine 4."""
+        raw_sym = symbol.replace('/', '').replace(':USDT', '')
+        
+        while True:
+            try:
+                # 1. Fetch Open Interest
+                oi_res = await self.exchange.fetch_open_interest(symbol)
+                oi = oi_res.get('openInterestAmount', 0) if oi_res else 0
+                
+                # Fetching Long/Short ratios typically requires implicit API calls in CCXT 
+                # binance futures specific endpoints:
+                
+                try:
+                    # 2. Fetch Global Long/Short Ratio
+                    ls_ratio_res = await self.exchange.fapiData_get_globallongshortaccountratio({'symbol': raw_sym, 'period': '5m', 'limit': 1})
+                    ls_ratio = float(ls_ratio_res[0].get('longShortRatio', 1.0)) if ls_ratio_res else 1.0
+                    long_pct = float(ls_ratio_res[0].get('longAccount', 0.5)) if ls_ratio_res else 0.5
+                    short_pct = float(ls_ratio_res[0].get('shortAccount', 0.5)) if ls_ratio_res else 0.5
+                    
+                    # 3. Fetch Top Trader Long/Short Ratio
+                    top_ls_res = await self.exchange.fapiData_get_toplongshortaccountratio({'symbol': raw_sym, 'period': '5m', 'limit': 1})
+                    top_long_pct = float(top_ls_res[0].get('longAccount', 0.5)) if top_ls_res else 0.5
+                except ccxt.NotSupported:
+                    # Binance Testnet does not support fapiData endpoints
+                    ls_ratio, long_pct, short_pct, top_long_pct = 1.0, 0.5, 0.5, 0.5
+                except Exception as e:
+                    print(f"Sentiment Ratio Poll Error for {symbol}: {e}")
+                    ls_ratio, long_pct, short_pct, top_long_pct = 1.0, 0.5, 0.5, 0.5
+                
+                # 4. Fetch Funding Rate
+                funding_res = await self.exchange.fetch_funding_rate(symbol)
+                funding_rate = funding_res.get('fundingRate', 0) if funding_res else 0
+                
+                data = {
+                    "open_interest": oi,
+                    "ls_ratio": ls_ratio,
+                    "long_account_pct": long_pct,
+                    "short_account_pct": short_pct,
+                    "top_trader_long_pct": top_long_pct,
+                    "funding_rate": funding_rate
+                }
+                
+                self.storage.set_sentiment(raw_sym, data)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"Sentiment Poll Error for {symbol}: {e}")
+                
+            # Wait 30 seconds before next poll to conserve weight limits
+            await asyncio.sleep(30)
 
     async def trade_loop(self):
         print("Trading loop started...")
@@ -88,13 +141,15 @@ class VortexBot:
                     ticks = self.storage.get_ticks(raw_sym)
                     
                     # Fast local memory access (0ms latency, Zero API limit hit)
-                    klines = self.storage.get_klines(raw_sym, '1m')
+                    klines_1m = self.storage.get_klines(raw_sym, '1m')
+                    klines_3m = self.storage.get_klines(raw_sym, '3m')
+                    sentiment_data = self.storage.get_sentiment(raw_sym)
                         
                     s1 = self.e1.process(ob, ticks)
                     s2 = self.e2.process(ticks)
-                    s3 = self.e3.process(klines)
-                    s4 = self.e4.process({})
-                    s5 = self.e5.process(klines)
+                    s3 = self.e3.process(klines_1m)
+                    s4 = self.e4.process(sentiment_data)
+                    s5 = self.e5.process(klines_3m)
                     
                     signals = {"e1": s1, "e2": s2, "e3": s3, "e4": s4}
                     dec = self.decision.evaluate(signals, s5)
@@ -108,9 +163,13 @@ class VortexBot:
                         elif not ob.get("bids"): reason = "No Orderbook"
                         elif abs(dec.get("final_score", 0)) < 0.45: reason = f"Low Score ({dec.get('final_score',0):.2f})"
                         
-                        print(f"[{current_time}] {raw_sym} | P: {price:.2f} | Action: SKIP | R: {reason}")
+                        regime_info = f"{s5.get('regime', 'UNK')}|{s5.get('vol_phase', 'UNK')}"
+                        sent_info = f"{s4.get('direction', 'UNK')}"
+                        
+                        print(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | SNT: {sent_info} | SKIP: {reason}")
                     else:
-                        print(f"[{current_time}] {raw_sym} | P: {price:.2f} | Action: {dec['action']} | Strat: {dec['strategy']} | Score: {dec['final_score']:.2f} | Conf: {dec['confidence']:.1f}%")
+                        regime_info = f"{s5.get('regime', 'UNK')}|{s5.get('vol_phase', 'UNK')}"
+                        print(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | Action: {dec['action']} | Strat: {dec['strategy']} | Score: {dec['final_score']:.2f} | Conf: {dec['confidence']:.1f}%")
                         
                         if price > 0:
                             risk_params = self.risk.calculate(dec, price, s3.get('atr', 0), s5.get('param_overrides', {}))
@@ -158,6 +217,8 @@ class VortexBot:
             loop_tasks.append(asyncio.create_task(self.watch_ob_for_symbol(sym)))
             loop_tasks.append(asyncio.create_task(self.watch_tr_for_symbol(sym)))
             loop_tasks.append(asyncio.create_task(self.watch_klines_for_symbol(sym, '1m')))
+            loop_tasks.append(asyncio.create_task(self.watch_klines_for_symbol(sym, '3m')))
+            loop_tasks.append(asyncio.create_task(self.poll_sentiment_data(sym)))
         
         loop_tasks.append(asyncio.create_task(self.trade_loop()))
         

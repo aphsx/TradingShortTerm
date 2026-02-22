@@ -1,4 +1,4 @@
-from utils import calculate_imbalance, calculate_rsi, calculate_atr, calculate_bollinger_bands
+from utils import calculate_imbalance, calculate_rsi, calculate_atr, calculate_bollinger_bands, calculate_adx, calculate_percentiles
 
 class Engine1OrderFlow:
     def process(self, orderbook, ticks):
@@ -101,28 +101,122 @@ class Engine4Sentiment:
             return {
                 "direction": None,
                 "strength": None,
-                "liq_proximity_score": None
+                "liq_proximity_score": None,
+                "oi_interpretation": None,
+                "funding_signal": None
             }
+            
+        ls_ratio = market_data.get('ls_ratio', 1.0)
+        funding_rate = market_data.get('funding_rate', 0.0)
+        long_pct = market_data.get('long_account_pct', 0.5)
+        top_long = market_data.get('top_trader_long_pct', 0.5)
+        
+        direction = "BALANCED"
+        strength = 0.0
+        
+        # Long/Short Ratio Contrarion Logic
+        if long_pct > 0.70:
+            direction = "CROWD_LONG" # Bias Short
+            strength += 0.4
+        elif long_pct < 0.35: # Equivalent to Short > 65%
+            direction = "CROWD_SHORT" # Bias Long
+            strength += 0.4
+            
+        # Funding Rate
+        funding_signal = "NEUTRAL"
+        if funding_rate > 0.0003: # > 0.03%
+            funding_signal = "LONGS_EXPENSIVE"
+            if direction == "CROWD_LONG": strength += 0.3
+        elif funding_rate < -0.0001: # < -0.01%
+            funding_signal = "SHORTS_EXPENSIVE"
+            if direction == "CROWD_SHORT": strength += 0.3
+            
+        # Top Trader Logic (Smart Money vs Retail)
+        if top_long > 0.60 and direction == "CROWD_SHORT":
+            strength += 0.3 # Smart money long, crowd short
+        elif top_long < 0.40 and direction == "CROWD_LONG":
+            strength += 0.3 # Smart money short, crowd long
+            
+        # Placeholder for complex Liquidation Map, use OI proxy for activity
+        oi = market_data.get("open_interest", 0)
+        liq_prox = 0.0
+        # Would require keeping historical OI to map 'change_pct', returning static proxy for testing
+        if oi > 0: liq_prox = min(0.5, (abs(funding_rate) * 1000)) 
+            
         return {
-            "direction": "BALANCED",
-            "strength": 0,
-            "liq_proximity_score": 0.0
+            "direction": direction,
+            "strength": min(1.0, strength),
+            "liq_proximity_score": liq_prox,
+            "oi_interpretation": "UNKNOWN",
+            "funding_signal": funding_signal
         }
 
 class Engine5Regime:
     def process(self, klines):
-        if not klines or len(klines) < 20:
+        if not klines or len(klines) < 30:
             return {
                 "tradeable": False,
                 "regime": None,
+                "vol_phase": None,
                 "spread_ok": False,
                 "weight_overrides": {"e1": 0.35, "e2": 0.25, "e3": 0.20, "e4": 0.12},
                 "param_overrides": {"tp_multiplier": 1.0, "sl_multiplier": 1.0, "leverage_max": 12}
             }
+            
+        closes = [float(k[4]) for k in klines]
+        highs = [float(k[2]) for k in klines]
+        lows = [float(k[3]) for k in klines]
+        
+        current_price = closes[-1]
+        
+        # 1. Volatility Phase (ATR as % of price)
+        atr_14 = calculate_atr(highs, lows, closes, 14)
+        atr_pct = (atr_14 / current_price) if current_price else 0
+        
+        # In a real system, we'd store historical atr_pct and use calculate_percentiles()
+        # For this implementation, we use static thresholds typical of crypto
+        vol_phase = "NORMAL_VOL"
+        if atr_pct < 0.001: vol_phase = "LOW_VOL" # Less than 0.1% move per candle
+        elif atr_pct > 0.005: vol_phase = "EXTREME_VOL" # > 0.5% move per 3m candle
+        elif atr_pct > 0.003: vol_phase = "HIGH_VOL"
+        
+        # 2. Trend Regime (ADX)
+        adx_14 = calculate_adx(highs, lows, closes, 14)
+        
+        regime = "RANGING"
+        if adx_14 < 20: regime = "CHOPPY"
+        elif adx_14 > 25: regime = "TRENDING"
+        
+        # 3. Tradeability & Spread Proxy
+        # If High/Low diff of current candle is 0 (stale data), spread might be bad
+        spread_proxy_pct = (highs[-1] - lows[-1]) / current_price if current_price else 0
+        spread_ok = spread_proxy_pct < 0.002 # Assume spread is ok if 3m range isn't inexplicably vast
+        
+        tradeable = True
+        if regime == "CHOPPY" or vol_phase == "EXTREME_VOL":
+            tradeable = False
+            
+        # 4. Dynamic Weight Setup
+        weights = {"e1": 0.35, "e2": 0.25, "e3": 0.20, "e4": 0.12}
+        params = {"tp_multiplier": 1.0, "sl_multiplier": 1.0, "leverage_max": 12}
+        
+        if regime == "TRENDING":
+            weights = {"e1": 0.40, "e2": 0.30, "e3": 0.10, "e4": 0.10} # Favor momentum
+            params["tp_multiplier"] = 1.5 # Let winners run
+            
+        elif regime == "RANGING":
+            weights = {"e1": 0.20, "e2": 0.20, "e3": 0.40, "e4": 0.15} # Favor oscillators
+            params["tp_multiplier"] = 0.8 # Take quick profits
+            
+        if vol_phase == "HIGH_VOL":
+            params["sl_multiplier"] = 1.5 # Widen SL to avoid wicks
+            params["leverage_max"] = 5 # Reduce risk
+            
         return {
-            "tradeable": True,
-            "regime": "NORMAL_VOL",
-            "spread_ok": True,
-            "weight_overrides": {"e1": 0.35, "e2": 0.25, "e3": 0.20, "e4": 0.12},
-            "param_overrides": {"tp_multiplier": 1.0, "sl_multiplier": 1.0, "leverage_max": 12}
+            "tradeable": tradeable,
+            "regime": regime,
+            "vol_phase": vol_phase,
+            "spread_ok": spread_ok,
+            "weight_overrides": weights,
+            "param_overrides": params
         }

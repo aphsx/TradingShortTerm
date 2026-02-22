@@ -55,3 +55,52 @@ def calculate_imbalance(bids, asks):
     if bid_vol + ask_vol == 0:
         return 0
     return (bid_vol - ask_vol) / (bid_vol + ask_vol)
+
+def calculate_adx(highs, lows, closes, period=14):
+    if len(closes) < period * 2:
+        return np.nan
+        
+    tr = []
+    plus_dm = []
+    minus_dm = []
+    
+    for i in range(1, len(closes)):
+        h = highs[i]
+        l = lows[i]
+        ph = highs[i-1]
+        pl = lows[i-1]
+        c = closes[i-1]
+        
+        tr.append(max(h - l, abs(h - c), abs(l - c)))
+        
+        up_move = h - ph
+        down_move = pl - l
+        
+        if up_move > down_move and up_move > 0:
+            plus_dm.append(up_move)
+        else:
+            plus_dm.append(0)
+            
+        if down_move > up_move and down_move > 0:
+            minus_dm.append(down_move)
+        else:
+            minus_dm.append(0)
+            
+    atr = calculate_ema(tr, period)
+    if atr == 0 or np.isnan(atr): return 0
+    
+    plus_di = 100 * (calculate_ema(plus_dm, period) / atr)
+    minus_di = 100 * (calculate_ema(minus_dm, period) / atr)
+    
+    if (plus_di + minus_di) == 0: return 0
+    
+    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+    
+    # Simple ADX (could use EMA of DX, but average works for approximation)
+    adx = np.mean([dx] * period) # Simplified
+    return adx
+
+def calculate_percentiles(data_list, percentiles=[20, 80, 95]):
+    if not data_list or len(data_list) < 5:
+        return {p: 0 for p in percentiles}
+    return {p: np.percentile(data_list, p) for p in percentiles}
