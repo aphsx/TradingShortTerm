@@ -9,6 +9,15 @@ def calculate_ema(data, period):
         ema.append(price * alpha + ema[-1] * (1 - alpha))
     return ema[-1]
 
+def calculate_ema_array(data, period):
+    if len(data) < period:
+        return []
+    alpha = 2 / (period + 1)
+    ema = [np.mean(data[:period])]
+    for price in data[period:]:
+        ema.append(price * alpha + ema[-1] * (1 - alpha))
+    return ema
+
 def calculate_rsi(data, period=14):
     if len(data) <= period:
         return 50.0
@@ -41,6 +50,17 @@ def calculate_atr(highs, lows, closes, period=14):
         lc = abs(lows[i] - closes[i-1])
         tr.append(max(hl, hc, lc))
     return calculate_ema(tr, period)
+
+def calculate_atr_array(highs, lows, closes, period=14):
+    if len(highs) <= period:
+        return []
+    tr = []
+    for i in range(1, len(highs)):
+        hl = highs[i] - lows[i]
+        hc = abs(highs[i] - closes[i-1])
+        lc = abs(lows[i] - closes[i-1])
+        tr.append(max(hl, hc, lc))
+    return calculate_ema_array(tr, period)
 
 def calculate_bollinger_bands(data, period=20, std_dev=2):
     if len(data) < period:

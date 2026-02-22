@@ -1,4 +1,4 @@
-from utils import calculate_imbalance, calculate_rsi, calculate_atr, calculate_bollinger_bands, calculate_adx, calculate_percentiles
+from utils import calculate_imbalance, calculate_rsi, calculate_atr, calculate_atr_array, calculate_bollinger_bands, calculate_adx, calculate_percentiles
 
 class Engine1OrderFlow:
     def process(self, orderbook, ticks):
@@ -170,15 +170,36 @@ class Engine5Regime:
         current_price = closes[-1]
         
         # 1. Volatility Phase (ATR as % of price)
-        atr_14 = calculate_atr(highs, lows, closes, 14)
-        atr_pct = (atr_14 / current_price) if current_price else 0
+        atr_array = calculate_atr_array(highs, lows, closes, 14)
         
-        # In a real system, we'd store historical atr_pct and use calculate_percentiles()
-        # For this implementation, we use static thresholds typical of crypto
-        vol_phase = "NORMAL_VOL"
-        if atr_pct < 0.001: vol_phase = "LOW_VOL" # Less than 0.1% move per candle
-        elif atr_pct > 0.005: vol_phase = "EXTREME_VOL" # > 0.5% move per 3m candle
-        elif atr_pct > 0.003: vol_phase = "HIGH_VOL"
+        if not atr_array or len(atr_array) < 50:
+            # Fallback to static if not enough history
+            atr_14 = calculate_atr(highs, lows, closes, 14)
+            atr_pct = (atr_14 / current_price) if current_price else 0
+            vol_phase = "NORMAL_VOL"
+            if atr_pct < 0.0015: vol_phase = "LOW_VOL" # Less than 0.15% move per 15m candle
+            elif atr_pct > 0.008: vol_phase = "EXTREME_VOL" # > 0.8% move per 15m candle
+            elif atr_pct > 0.005: vol_phase = "HIGH_VOL" # > 0.5% move per 15m candle
+        else:
+            # Calculate historical ATR%
+            atr_pct_history = []
+            offset = len(closes) - len(atr_array)
+            for i in range(len(atr_array)):
+                c = closes[offset + i]
+                if c > 0:
+                    atr_pct_history.append(atr_array[i] / c)
+            
+            percentiles = calculate_percentiles(atr_pct_history, [25, 75, 90])
+            p25, p75, p90 = percentiles.get(25, 0), percentiles.get(75, 0), percentiles.get(90, 0)
+            
+            atr_pct = atr_pct_history[-1] if atr_pct_history else 0
+            
+            vol_phase = "NORMAL_VOL"
+            # Prevent zero-division/empty flatlines
+            if p90 > 0:
+                if atr_pct < p25: vol_phase = "LOW_VOL"
+                elif atr_pct > p90: vol_phase = "EXTREME_VOL"
+                elif atr_pct > p75: vol_phase = "HIGH_VOL"
         
         # 2. Trend Regime (ADX)
         adx_14 = calculate_adx(highs, lows, closes, 14)

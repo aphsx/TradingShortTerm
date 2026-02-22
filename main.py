@@ -67,11 +67,25 @@ class VortexBot:
                 
     async def watch_klines_for_symbol(self, symbol, timeframe='1m'):
         raw_sym = symbol.replace('/', '').replace(':USDT', '')
+        
+        # Pre-fetch historical candles to bootstrap indicator math
+        try:
+            hist = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=500)
+            self.storage.set_klines(raw_sym, timeframe, hist)
+        except Exception as e:
+            print(f"Prefetch Kline Error for {symbol}: {e}")
+            
         while True:
             try:
-                klines = await self.exchange.watch_ohlcv(symbol, timeframe)
-                # Store the most recent 100 candles locally
-                self.storage.set_klines(raw_sym, timeframe, klines[-100:])
+                new_klines = await self.exchange.watch_ohlcv(symbol, timeframe)
+                current_klines = self.storage.get_klines(raw_sym, timeframe)
+                
+                curr_dict = {k[0]: k for k in current_klines}
+                for k in new_klines:
+                    curr_dict[k[0]] = k
+                    
+                merged = sorted(curr_dict.values(), key=lambda x: x[0])[-500:]
+                self.storage.set_klines(raw_sym, timeframe, merged)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -85,8 +99,11 @@ class VortexBot:
         while True:
             try:
                 # 1. Fetch Open Interest
-                oi_res = await self.exchange.fetch_open_interest(symbol)
-                oi = oi_res.get('openInterestAmount', 0) if oi_res else 0
+                try:
+                    oi_res = await self.exchange.fetch_open_interest(symbol)
+                    oi = oi_res.get('openInterestAmount', 0) if oi_res else 0
+                except Exception:
+                    oi = 0
                 
                 # Fetching Long/Short ratios typically requires implicit API calls in CCXT 
                 # binance futures specific endpoints:
@@ -101,16 +118,16 @@ class VortexBot:
                     # 3. Fetch Top Trader Long/Short Ratio
                     top_ls_res = await self.exchange.fapiData_get_toplongshortaccountratio({'symbol': raw_sym, 'period': '5m', 'limit': 1})
                     top_long_pct = float(top_ls_res[0].get('longAccount', 0.5)) if top_ls_res else 0.5
-                except ccxt.NotSupported:
+                except Exception:
                     # Binance Testnet does not support fapiData endpoints
-                    ls_ratio, long_pct, short_pct, top_long_pct = 1.0, 0.5, 0.5, 0.5
-                except Exception as e:
-                    print(f"Sentiment Ratio Poll Error for {symbol}: {e}")
                     ls_ratio, long_pct, short_pct, top_long_pct = 1.0, 0.5, 0.5, 0.5
                 
                 # 4. Fetch Funding Rate
-                funding_res = await self.exchange.fetch_funding_rate(symbol)
-                funding_rate = funding_res.get('fundingRate', 0) if funding_res else 0
+                try:
+                    funding_res = await self.exchange.fetch_funding_rate(symbol)
+                    funding_rate = funding_res.get('fundingRate', 0) if funding_res else 0
+                except Exception:
+                    funding_rate = 0
                 
                 data = {
                     "open_interest": oi,
@@ -122,6 +139,8 @@ class VortexBot:
                 }
                 
                 self.storage.set_sentiment(raw_sym, data)
+                if symbol == "ETH/USDT:USDT" or symbol == "BTC/USDT:USDT":
+                    print(f"DEBUG: Successfully stored SNT for {symbol}")
                 
             except asyncio.CancelledError:
                 break
@@ -142,17 +161,20 @@ class VortexBot:
                     
                     # Fast local memory access (0ms latency, Zero API limit hit)
                     klines_1m = self.storage.get_klines(raw_sym, '1m')
-                    klines_3m = self.storage.get_klines(raw_sym, '3m')
+                    klines_15m = self.storage.get_klines(raw_sym, '15m')
                     sentiment_data = self.storage.get_sentiment(raw_sym)
                         
                     s1 = self.e1.process(ob, ticks)
                     s2 = self.e2.process(ticks)
                     s3 = self.e3.process(klines_1m)
                     s4 = self.e4.process(sentiment_data)
-                    s5 = self.e5.process(klines_3m)
+                    s5 = self.e5.process(klines_15m)
                     
                     signals = {"e1": s1, "e2": s2, "e3": s3, "e4": s4}
                     dec = self.decision.evaluate(signals, s5)
+                    
+                    if symbol == "BTC/USDT:USDT":
+                        print(f"DEBUG BTC: 1m={len(klines_1m)}, 15m={len(klines_15m)}")
                     
                     current_time = datetime.datetime.now().strftime('%H:%M:%S')
                     price = s1.get("micro_price", 0)
@@ -217,7 +239,7 @@ class VortexBot:
             loop_tasks.append(asyncio.create_task(self.watch_ob_for_symbol(sym)))
             loop_tasks.append(asyncio.create_task(self.watch_tr_for_symbol(sym)))
             loop_tasks.append(asyncio.create_task(self.watch_klines_for_symbol(sym, '1m')))
-            loop_tasks.append(asyncio.create_task(self.watch_klines_for_symbol(sym, '3m')))
+            loop_tasks.append(asyncio.create_task(self.watch_klines_for_symbol(sym, '15m')))
             loop_tasks.append(asyncio.create_task(self.poll_sentiment_data(sym)))
         
         loop_tasks.append(asyncio.create_task(self.trade_loop()))
