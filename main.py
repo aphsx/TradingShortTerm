@@ -172,10 +172,71 @@ class VortexBot:
                     
                     signals = {"e1": s1, "e2": s2, "e3": s3, "e4": s4}
                     dec = self.decision.evaluate(signals, s5)
-                    
+
                     current_time = datetime.datetime.now().strftime('%H:%M:%S')
                     price = s1.get("micro_price", 0)
-                    
+
+                    # === SAVE SIGNAL SNAPSHOT (Every Decision) ===
+                    # บันทึกทุกครั้งที่ตัดสินใจ ไม่ว่าจะเข้าหรือไม่เข้า
+                    # เพื่อวิเคราะห์ว่าทำไมไม่เข้า และ signal ไหนทำงานดี
+                    self.storage.save_signal_snapshot({
+                        "symbol": raw_sym,
+                        "action": dec["action"],
+                        "reason": dec.get("reason", ""),
+                        "final_score": dec.get("final_score", 0),
+                        "confidence": dec.get("confidence", 0),
+                        "strategy": dec.get("strategy", ""),
+                        "current_price": price,
+                        "atr": s3.get("atr", 0),
+
+                        # Engine 1: Order Flow
+                        "e1_direction": s1.get("direction"),
+                        "e1_strength": s1.get("strength"),
+                        "e1_conviction": s1.get("conviction"),
+                        "e1_imbalance": s1.get("imbalance"),
+                        "e1_imbalance_l5": s1.get("depth_imbalance", {}).get("imbalance_L5"),
+                        "e1_imbalance_l10": s1.get("depth_imbalance", {}).get("imbalance_L10"),
+                        "e1_imbalance_l20": s1.get("depth_imbalance", {}).get("imbalance_L20"),
+                        "e1_ofi_velocity": s1.get("ofi_velocity", 0),
+                        "e1_vpin": s1.get("vpin", 0),
+                        "e1_micro_price": s1.get("micro_price"),
+
+                        # Engine 2: Tick Momentum
+                        "e2_direction": s2.get("direction"),
+                        "e2_strength": s2.get("strength"),
+                        "e2_aggressor_ratio": s2.get("aggressor_ratio"),
+                        "e2_aggressor_1s": s2.get("aggressor_1s"),
+                        "e2_aggressor_5s": s2.get("aggressor_5s"),
+                        "e2_aggressor_15s": s2.get("aggressor_15s"),
+                        "e2_alignment": s2.get("alignment", 0),
+                        "e2_velocity_ratio": s2.get("velocity_ratio"),
+
+                        # Engine 3: Technical
+                        "e3_direction": s3.get("direction"),
+                        "e3_strength": s3.get("strength"),
+                        "e3_rsi": s3.get("rsi"),
+                        "e3_bb_zone": s3.get("bb_zone"),
+
+                        # Engine 4: Sentiment
+                        "e4_direction": s4.get("direction"),
+                        "e4_strength": s4.get("strength"),
+                        "e4_ls_ratio": 0,  # Can add from sentiment_data if needed
+                        "e4_funding_rate": 0,
+                        "e4_long_pct": 0,
+                        "e4_short_pct": 0,
+
+                        # Engine 5: Regime
+                        "e5_regime": s5.get("regime"),
+                        "e5_vol_phase": s5.get("vol_phase"),
+                        "e5_tradeable": s5.get("tradeable", True),
+
+                        # Weights
+                        "weight_e1": s5.get("weight_overrides", {}).get("e1", 0.35),
+                        "weight_e2": s5.get("weight_overrides", {}).get("e2", 0.25),
+                        "weight_e3": s5.get("weight_overrides", {}).get("e3", 0.20),
+                        "weight_e4": s5.get("weight_overrides", {}).get("e4", 0.12),
+                    })
+
                     if dec["action"] == "NO_TRADE":
                         reason = "Wait"
                         if not ticks: reason = "No Ticks"

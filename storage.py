@@ -70,8 +70,62 @@ class DataStorage:
 
     # --- Supabase Cold Data ---
     def save_trade(self, trade_data):
+        """Save executed trade to database"""
         if self.supabase:
             try:
                 self.supabase.table("trades").insert(trade_data).execute()
             except Exception as e:
-                print(f"Error saving to Supabase: {e}")
+                print(f"Error saving trade to Supabase: {e}")
+
+    def save_signal_snapshot(self, signal_data):
+        """
+        Save complete signal snapshot (including NO_TRADE decisions)
+
+        This is crucial for analyzing why trades were rejected and
+        identifying which signals work best.
+        """
+        if self.supabase:
+            try:
+                self.supabase.table("signals_snapshots").insert(signal_data).execute()
+            except Exception as e:
+                print(f"Error saving signal snapshot to Supabase: {e}")
+
+    def save_rejected_signal(self, rejection_data):
+        """
+        Save rejected signal with reason
+
+        Helps optimize filters by showing which opportunities we missed.
+        """
+        if self.supabase:
+            try:
+                self.supabase.table("rejected_signals").insert(rejection_data).execute()
+            except Exception as e:
+                print(f"Error saving rejected signal to Supabase: {e}")
+
+    def save_trade_outcome(self, outcome_data):
+        """
+        Save trade result/PnL
+
+        Called when trade closes (TP hit, SL hit, or manual close)
+        """
+        if self.supabase:
+            try:
+                self.supabase.table("trade_outcomes").insert(outcome_data).execute()
+            except Exception as e:
+                print(f"Error saving trade outcome to Supabase: {e}")
+
+    def update_performance_metrics(self, period_type="HOURLY"):
+        """
+        Calculate and store aggregated performance metrics
+
+        Should be called periodically (e.g., every hour)
+        """
+        if not self.supabase:
+            return
+
+        try:
+            # This would typically be a stored procedure or complex query
+            # For now, just a placeholder for the concept
+            pass
+        except Exception as e:
+            print(f"Error updating performance metrics: {e}")
