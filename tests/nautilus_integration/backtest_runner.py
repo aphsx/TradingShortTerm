@@ -31,7 +31,7 @@ def run_vortex_backtest(csv_path=None):
     
     engine.add_venue(
         Venue("BINANCE"),
-        OmsType.HEDGING,
+        OmsType.NETTING,
         AccountType.MARGIN,
         [Money(BASE_BALANCE, USDT)] # Starting Balance from Config
     )

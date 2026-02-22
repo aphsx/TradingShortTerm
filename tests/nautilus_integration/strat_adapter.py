@@ -216,22 +216,12 @@ class VortexNautilusAdapter(Strategy):
             self._close_position(close_reason)
 
     def _close_position(self, reason):
-        """Submit a market order to close the current open position."""
+        """Close the current open position using Nautilus close_position() API."""
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if not positions:
-            self.in_position = False
+            self.in_position  = False
+            self.position_side = None
             return
-
-        position  = positions[0]
-        close_side = OrderSide.SELL if self.position_side == "LONG" else OrderSide.BUY
-        instrument = self.cache.instrument(self.instrument_id)
-
-        order = self.order_factory.market(
-            instrument_id=self.instrument_id,
-            order_side=close_side,
-            quantity=instrument.make_qty(float(position.quantity)),
-        )
-        self.submit_order(order)
 
         pnl_estimate = ""
         price_obj = self.cache.price(self.instrument_id, PriceType.LAST)
@@ -242,10 +232,14 @@ class VortexNautilusAdapter(Strategy):
             else:
                 pnl_estimate = f" | est PnL: {(self.entry_price - current_price) / self.entry_price * 100:.2f}%"
 
+        # Use Nautilus Strategy.close_position() — works correctly in NETTING mode
+        for position in positions:
+            self.close_position(position)
+
         self.log.info(f"CLOSE {self.position_side} | {reason}{pnl_estimate}")
 
-        self.in_position     = False
-        self.position_side   = None
+        self.in_position      = False
+        self.position_side    = None
         self.bars_since_close = 0
 
     def _evaluate_and_execute(self, **signals_override):
@@ -287,6 +281,14 @@ class VortexNautilusAdapter(Strategy):
                 self.log.info(f"Decision Reject [{self.bar_count}]: {reason}")
             return
 
+        # Minimum confidence gate: skip weak signals that can't cover fees.
+        # At 0.04% taker fee × 2 sides = 0.08% cost; need some edge above that.
+        MIN_CONFIDENCE = 15.0
+        if decision.get('confidence', 0) < MIN_CONFIDENCE:
+            reason = f"Low confidence ({decision['confidence']:.1f}% < {MIN_CONFIDENCE}%)"
+            self.rejection_reasons[reason] = self.rejection_reasons.get(reason, 0) + 1
+            return
+
         # 2. Risk Check
         price_obj = self.cache.price(self.instrument_id, PriceType.LAST)
         current_price = float(price_obj) if price_obj else signals['e3'].get('close', 0.0)
@@ -307,16 +309,17 @@ class VortexNautilusAdapter(Strategy):
         self._submit_order(decision, risk_results)
 
     def _submit_order(self, decision, risk):
-        from config import BASE_BALANCE, MAX_LEVERAGE
+        from config import BASE_BALANCE
 
         side = OrderSide.BUY if decision['action'] == "LONG" else OrderSide.SELL
 
         px = float(self.cache.price(self.instrument_id, PriceType.LAST))
 
-        # Cap position size: never risk more than account_balance * leverage.
-        # The Kelly formula can produce huge notional sizes when SL is tiny vs price.
-        leverage      = risk.get('leverage', 10)
-        max_notional  = BASE_BALANCE * min(leverage, MAX_LEVERAGE)
+        # Cap position size to 3x account balance max (conservative for 1-min scalping).
+        # Kelly formula produces huge notional when SL distance % is tiny vs price.
+        # At 3x leverage with 0.04% taker fee → commission ≈ 0.024% of notional round-trip,
+        # which is manageable when TP distance > 0.05%.
+        max_notional  = BASE_BALANCE * 3
         pos_size_usdt = min(risk['position_size_usdt'], max_notional)
         qty = pos_size_usdt / px
 
