@@ -1,5 +1,6 @@
 import redis
 import json
+import asyncio
 from supabase import create_client, Client
 from config import REDIS_HOST, REDIS_PORT, SUPABASE_URL, SUPABASE_KEY
 
@@ -69,48 +70,42 @@ class DataStorage:
         return {k: float(v) for k, v in data.items()} if data else {}
 
     # --- Supabase Cold Data ---
-    def save_trade(self, trade_data):
-        """Save executed trade to database"""
+    async def save_trade(self, trade_data):
+        """Save executed trade to database (Non-blocking)"""
         if self.supabase:
             try:
-                self.supabase.table("trades").insert(trade_data).execute()
+                # Run blocking Supabase call in a separate thread to avoid blocking the event loop
+                await asyncio.to_thread(self.supabase.table("trades").insert(trade_data).execute)
             except Exception as e:
                 print(f"Error saving trade to Supabase: {e}")
 
-    def save_signal_snapshot(self, signal_data):
+    async def save_signal_snapshot(self, signal_data):
         """
-        Save complete signal snapshot (including NO_TRADE decisions)
-
-        This is crucial for analyzing why trades were rejected and
-        identifying which signals work best.
+        Save complete signal snapshot (including NO_TRADE decisions) (Non-blocking)
         """
         if self.supabase:
             try:
-                self.supabase.table("signals_snapshots").insert(signal_data).execute()
+                await asyncio.to_thread(self.supabase.table("signals_snapshots").insert(signal_data).execute)
             except Exception as e:
                 print(f"Error saving signal snapshot to Supabase: {e}")
 
-    def save_rejected_signal(self, rejection_data):
+    async def save_rejected_signal(self, rejection_data):
         """
-        Save rejected signal with reason
-
-        Helps optimize filters by showing which opportunities we missed.
+        Save rejected signal with reason (Non-blocking)
         """
         if self.supabase:
             try:
-                self.supabase.table("rejected_signals").insert(rejection_data).execute()
+                await asyncio.to_thread(self.supabase.table("rejected_signals").insert(rejection_data).execute)
             except Exception as e:
                 print(f"Error saving rejected signal to Supabase: {e}")
 
-    def save_trade_outcome(self, outcome_data):
+    async def save_trade_outcome(self, outcome_data):
         """
-        Save trade result/PnL
-
-        Called when trade closes (TP hit, SL hit, or manual close)
+        Save trade result/PnL (Non-blocking)
         """
         if self.supabase:
             try:
-                self.supabase.table("trade_outcomes").insert(outcome_data).execute()
+                await asyncio.to_thread(self.supabase.table("trade_outcomes").insert(outcome_data).execute)
             except Exception as e:
                 print(f"Error saving trade outcome to Supabase: {e}")
 

@@ -177,9 +177,8 @@ class VortexBot:
                     price = s1.get("micro_price", 0)
 
                     # === SAVE SIGNAL SNAPSHOT (Every Decision) ===
-                    # บันทึกทุกครั้งที่ตัดสินใจ ไม่ว่าจะเข้าหรือไม่เข้า
-                    # เพื่อวิเคราะห์ว่าทำไมไม่เข้า และ signal ไหนทำงานดี
-                    self.storage.save_signal_snapshot({
+                    # บันทึกทุกครั้งที่ตัดสินใจ แบบ non-blocking (ไม่ขวางลูปเทรด)
+                    asyncio.create_task(self.storage.save_signal_snapshot({
                         "symbol": raw_sym,
                         "action": dec["action"],
                         "reason": dec.get("reason", ""),
@@ -217,13 +216,13 @@ class VortexBot:
                         "e3_rsi": s3.get("rsi"),
                         "e3_bb_zone": s3.get("bb_zone"),
 
-                        # Engine 4: Sentiment
+                        # Engine 4: Sentiment (Fixed: Mapping real data)
                         "e4_direction": s4.get("direction"),
                         "e4_strength": s4.get("strength"),
-                        "e4_ls_ratio": 0,  # Can add from sentiment_data if needed
-                        "e4_funding_rate": 0,
-                        "e4_long_pct": 0,
-                        "e4_short_pct": 0,
+                        "e4_ls_ratio": sentiment_data.get("ls_ratio", 0),
+                        "e4_funding_rate": sentiment_data.get("funding_rate", 0),
+                        "e4_long_pct": sentiment_data.get("long_account_pct", 0),
+                        "e4_short_pct": sentiment_data.get("short_account_pct", 0),
 
                         # Engine 5: Regime
                         "e5_regime": s5.get("regime"),
@@ -235,14 +234,29 @@ class VortexBot:
                         "weight_e2": s5.get("weight_overrides", {}).get("e2", 0.25),
                         "weight_e3": s5.get("weight_overrides", {}).get("e3", 0.20),
                         "weight_e4": s5.get("weight_overrides", {}).get("e4", 0.12),
-                    })
+                    }))
 
                     if dec["action"] == "NO_TRADE":
-                        reason = "Wait"
+                        reason = dec.get("reason", "Wait")
                         if not ticks: reason = "No Ticks"
                         elif not ob.get("bids"): reason = "No Orderbook"
-                        elif abs(dec.get("final_score", 0)) < 0.45: reason = f"Low Score ({dec.get('final_score',0):.2f})"
                         
+                        # === LOG REJECTED SIGNAL (Non-blocking) ===
+                        asyncio.create_task(self.storage.save_rejected_signal({
+                            "symbol": raw_sym,
+                            "rejection_reason": reason,
+                            "rejection_stage": "DecisionEngine",
+                            "would_be_action": "LONG" if dec.get("final_score", 0) > 0 else "SHORT",
+                            "would_be_score": dec.get("final_score", 0),
+                            "vpin": s1.get("vpin", 0),
+                            "ofi_velocity": s1.get("ofi_velocity", 0),
+                            "alignment": s2.get("alignment", 0),
+                            "agreements": sum(1 for d in [s1.get('direction'), s2.get('direction'), s3.get('direction'), s4.get('direction')] if d is not None and d != 'NEUTRAL'),
+                            "current_price": price,
+                            "regime": s5.get("regime"),
+                            "vol_phase": s5.get("vol_phase")
+                        }))
+
                         regime_info = f"{s5.get('regime', 'UNK')}|{s5.get('vol_phase', 'UNK')}"
                         sent_info = f"{s4.get('direction', 'UNK')}"
                         
@@ -263,8 +277,9 @@ class VortexBot:
                             if order:
                                 if order.get("status", "SUCCESS") == "SUCCESS":
                                     self.storage.set_position(raw_sym, order)
-                                # Save to Supabase (Granular Order/Execution Metrics)
-                                self.storage.save_trade({
+                                
+                                # === SAVE TRADE (Non-blocking) ===
+                                asyncio.create_task(self.storage.save_trade({
                                     "symbol": order.get("symbol", raw_sym),
                                     "side": order.get("side", dec["action"]),
                                     "strategy": order.get("strategy", dec["strategy"]),
@@ -285,7 +300,7 @@ class VortexBot:
                                     
                                     "confidence": dec.get("confidence", 0),
                                     "final_score": dec.get("final_score", 0)
-                                })
+                                }))
             except asyncio.CancelledError:
                 break
             except Exception as e:
