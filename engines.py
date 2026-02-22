@@ -288,18 +288,53 @@ class Engine2Tick:
         base_strength = abs(aggressor_ratio - 0.5) * 2
         strength = min(1.0, base_strength * (1 + alignment * 0.5))  # Up to 50% boost
 
+        # === ACTUAL velocity_ratio calculation ===
+        # Compare 1s aggressor ratio change rate vs 5s baseline
+        # velocity_ratio > 1 means short-term momentum accelerating
+        if aggressor_5s != 0.5 and abs(aggressor_5s - 0.5) > 0.01:
+            velocity_ratio = abs(aggressor_1s - 0.5) / abs(aggressor_5s - 0.5)
+        else:
+            velocity_ratio = 1.0
+
+        # === ACTUAL streak calculation ===
+        # Count consecutive ticks in the same direction (buy or sell)
+        streak = 0
+        if ticks_1s:
+            last_side = ticks_1s[0].get('m', False)
+            current_streak = 1
+            for tick in ticks_1s[1:]:
+                if tick.get('m', False) == last_side:
+                    current_streak += 1
+                else:
+                    break
+            streak = current_streak
+
+        # === ACTUAL volume_spike detection ===
+        # Compare current 1s volume vs rolling 15s average per second
+        import numpy as np
+        vol_1s = sum(float(t.get('q', 0)) for t in ticks_1s)
+        vol_15s = sum(float(t.get('q', 0)) for t in ticks_15s)
+        avg_vol_per_sec = vol_15s / 15.0 if ticks_15s else 0
+
+        # spike_ratio = current 1s volume / average 1s volume
+        spike_ratio = vol_1s / avg_vol_per_sec if avg_vol_per_sec > 0 else 1.0
+
+        # Volume spike = current volume > 2 standard deviations above mean
+        # Simplified: spike when ratio > 2.0x average
+        volume_spike = spike_ratio > 2.0
+
         return {
             "direction": direction,
             "strength": strength,
-            "velocity_ratio": 1.5,
+            "velocity_ratio": velocity_ratio,
             "aggressor_ratio": aggressor_ratio,
             "aggressor_1s": aggressor_1s,
             "aggressor_5s": aggressor_5s,
             "aggressor_15s": aggressor_15s,
-            "alignment": alignment,  # High alignment = strong momentum
-            "streak": 5,
-            "volume_spike": False,
-            "spike_ratio": 1.0
+            "alignment": alignment,
+            "streak": streak,
+            "volume_spike": volume_spike,
+            "spike_ratio": spike_ratio
         }
 
 class Engine3Technical:
