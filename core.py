@@ -239,23 +239,31 @@ class RiskManager:
         
         sl_distance = 0
         tp1_distance = 0
-        
-        # Scalping mode: tight SL/TP to enter-exit fast for quick profit
+
+        # ── TP/SL sizing: wide enough to profit after paying round-trip fees ──
+        # Round-trip cost = (taker_fee + slippage) × 2 sides = ~0.18% of price.
+        # TP must be >> fees, so we use ATR multiples that respect a 2:1+ R:R.
         if strategy == "A":
-            sl_distance  = safe_atr * 0.25 * atr_multiplier_sl   # was 0.4
-            tp1_distance = safe_atr * 0.40 * atr_multiplier_tp   # was 0.6 → R:R 1.6
+            # Momentum breakout: ride the move, wide TP to let it run
+            sl_distance  = safe_atr * 0.60 * atr_multiplier_sl
+            tp1_distance = safe_atr * 1.50 * atr_multiplier_tp   # 2.5:1 R:R
         elif strategy == "B":
-            sl_distance  = safe_atr * 0.30 * atr_multiplier_sl   # was 0.5
-            tp1_distance = safe_atr * 0.45 * atr_multiplier_tp   # was 0.8 → R:R 1.5
+            # Mean reversion: target full band width back to mid
+            sl_distance  = safe_atr * 0.70 * atr_multiplier_sl
+            tp1_distance = safe_atr * 1.40 * atr_multiplier_tp   # 2:1 R:R
         elif strategy == "C":
-            sl_distance  = safe_atr * 0.20 * atr_multiplier_sl   # was 0.3
-            tp1_distance = safe_atr * 0.30 * atr_multiplier_tp   # was 0.5 → R:R 1.5
-            
-        # Min TP check
-        min_tp_pct = (EXCHANGE_TAKER_FEE * 2) + SLIPPAGE_BUFFER 
+            # Liquidation scalp: explosive short move, tightest SL
+            sl_distance  = safe_atr * 0.50 * atr_multiplier_sl
+            tp1_distance = safe_atr * 1.20 * atr_multiplier_tp   # 2.4:1 R:R
+
+        # ── Fee-aware minimum TP check ───────────────────────────────────────
+        # BOTH entry AND exit pay fee+slippage, so round-trip cost is 2× per-side.
+        # TP must beat round-trip cost × 2.5 to leave a meaningful profit margin.
+        round_trip_cost_pct = (EXCHANGE_TAKER_FEE + SLIPPAGE_BUFFER) * 2   # 0.18%
+        min_tp_pct = round_trip_cost_pct * 2.5                               # 0.45%
         min_tp = current_price * min_tp_pct
         if tp1_distance < min_tp:
-            return {"action": "NO_TRADE", "reason": f"Target Profit ({tp1_distance:.4f}) too small. Fails {min_tp_pct*100:.3f}% fee+slippage test."}
+            return {"action": "NO_TRADE", "reason": f"TP {tp1_distance/current_price*100:.3f}% < min {min_tp_pct*100:.3f}% (2.5× round-trip fees — ATR too small to trade)"}
             
         # R:R Check
         if sl_distance <= 0:

@@ -53,9 +53,9 @@ class VortexNautilusAdapter(Strategy):
         self.tp_price = 0.0
         self.sl_price = 0.0
         self.entry_bar = 0
-        self.max_hold_bars = 10     # Scalping: auto-close after 10 bars (10 min) max
+        self.max_hold_bars = 20     # Up to 20 bars (20 min): let winners run
         self.bars_since_close = 99  # Start ready to trade immediately
-        self.min_bars_between_trades = 1  # Scalping: only 1 bar cooldown between trades
+        self.min_bars_between_trades = 3  # 3-bar cooldown: reduce over-trading frequency
 
         # 5. E2 streak tracking — counts consecutive same-direction bars for bar-only backtest
         self._bull_streak = 0
@@ -234,21 +234,31 @@ class VortexNautilusAdapter(Strategy):
         bar_close = float(bar.close)
         bars_held = self.bar_count - self.entry_bar
 
-        # --- Breakeven stop: trail SL to entry once halfway to TP ---
+        # --- Trailing stop: two-stage profit protection ---
+        # Stage 1 (≥50% TP): move SL to entry (breakeven — no loss possible)
+        # Stage 2 (≥75% TP): trail SL to 50% of TP distance (lock partial profit)
         if self.position_side == "LONG":
             tp_dist = self.tp_price - self.entry_price
             if tp_dist > 0:
                 profit_pct = (bar_close - self.entry_price) / tp_dist
-                if profit_pct >= 0.5:
-                    new_sl = self.entry_price  # Move to breakeven
+                if profit_pct >= 0.75:
+                    new_sl = self.entry_price + tp_dist * 0.50  # Lock 50% of move
+                    if new_sl > self.sl_price:
+                        self.sl_price = new_sl
+                elif profit_pct >= 0.50:
+                    new_sl = self.entry_price  # Breakeven
                     if new_sl > self.sl_price:
                         self.sl_price = new_sl
         elif self.position_side == "SHORT":
             tp_dist = self.entry_price - self.tp_price
             if tp_dist > 0:
                 profit_pct = (self.entry_price - bar_close) / tp_dist
-                if profit_pct >= 0.5:
-                    new_sl = self.entry_price  # Move to breakeven
+                if profit_pct >= 0.75:
+                    new_sl = self.entry_price - tp_dist * 0.50  # Lock 50% of move
+                    if new_sl < self.sl_price:
+                        self.sl_price = new_sl
+                elif profit_pct >= 0.50:
+                    new_sl = self.entry_price  # Breakeven
                     if new_sl < self.sl_price:
                         self.sl_price = new_sl
 
@@ -337,9 +347,9 @@ class VortexNautilusAdapter(Strategy):
                 self.log.info(f"Decision Reject [{self.bar_count}]: {reason}")
             return
 
-        # Minimum confidence gate: skip weak signals that can't cover fees.
-        # Scalping mode: lowered to 10 since we trade more frequently with tighter TP/SL.
-        MIN_CONFIDENCE = 10.0
+        # Minimum confidence gate: only trade when signals are genuinely strong.
+        # Raising from 10 → 35 dramatically reduces noise trades and fee bleed.
+        MIN_CONFIDENCE = 35.0
         if decision.get('confidence', 0) < MIN_CONFIDENCE:
             reason = f"Low confidence ({decision['confidence']:.1f}% < {MIN_CONFIDENCE}%)"
             self.rejection_reasons[reason] = self.rejection_reasons.get(reason, 0) + 1
@@ -354,6 +364,14 @@ class VortexNautilusAdapter(Strategy):
 
         atr    = signals['e3'].get('atr', current_price * 0.002)
         params = e5_filter.get('param_overrides', {})
+
+        # ATR filter: only trade when market is volatile enough for TP to clear fees.
+        # Need ATR > 0.35% of price so that 1.2–1.5× ATR TP covers round-trip cost (0.45%).
+        min_atr_pct = 0.0035  # 0.35% of price
+        if current_price > 0 and atr < current_price * min_atr_pct:
+            reason = f"ATR too small ({atr/current_price*100:.3f}% < {min_atr_pct*100:.2f}% — market too quiet)"
+            self.rejection_reasons[reason] = self.rejection_reasons.get(reason, 0) + 1
+            return
 
         risk_results = self.risk_manager.calculate(decision, current_price, atr, params)
 
@@ -371,11 +389,10 @@ class VortexNautilusAdapter(Strategy):
 
         px = float(self.cache.price(self.instrument_id, PriceType.LAST))
 
-        # Cap position size to 3x account balance max (conservative for 1-min scalping).
-        # Kelly formula produces huge notional when SL distance % is tiny vs price.
-        # At 3x leverage with 0.04% taker fee → commission ≈ 0.024% of notional round-trip,
-        # which is manageable when TP distance > 0.05%.
-        max_notional  = BASE_BALANCE * 3
+        # Cap position size to 2× account balance to limit absolute fee exposure.
+        # With correct min_tp (0.45%) enforced in RiskManager, TP will always
+        # exceed fees — but keeping notional tighter ensures fee-to-profit ratio stays sane.
+        max_notional  = BASE_BALANCE * 2
         pos_size_usdt = min(risk['position_size_usdt'], max_notional)
         qty = pos_size_usdt / px
 

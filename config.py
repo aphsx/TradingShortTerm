@@ -53,7 +53,7 @@ if _PYDANTIC_AVAILABLE:
         # ── Fee & slippage model ──────────────────────────────────────────
         exchange_taker_fee: float = Field(default=0.0005, ge=0, le=0.01)
         slippage_buffer: float = Field(default=0.0004, ge=0, le=0.05)
-        min_rr_ratio: float = Field(default=0.8, gt=0)
+        min_rr_ratio: float = Field(default=2.0, gt=0)
 
         # ── Engine sensitivities ──────────────────────────────────────────
         e1_imbalance_threshold: float = Field(default=0.15, gt=0, lt=1)
@@ -141,7 +141,7 @@ if _PYDANTIC_AVAILABLE:
                 risk_per_trade=float(os.getenv("RISK_PER_TRADE", "0.01")),
                 exchange_taker_fee=float(os.getenv("EXCHANGE_TAKER_FEE", "0.0005")),
                 slippage_buffer=float(os.getenv("SLIPPAGE_BUFFER", "0.0004")),
-                min_rr_ratio=float(os.getenv("MIN_RR_RATIO", "0.8")),
+                min_rr_ratio=float(os.getenv("MIN_RR_RATIO", "2.0")),
                 e1_imbalance_threshold=float(os.getenv("E1_IMBALANCE_THRESHOLD", "0.15")),
                 e2_momentum_threshold=float(os.getenv("E2_MOMENTUM_THRESHOLD", "0.55")),
                 e4_funding_rate_threshold=float(os.getenv("E4_FUNDING_RATE_THRESHOLD", "0.00015")),
@@ -264,7 +264,7 @@ else:
 
     EXCHANGE_TAKER_FEE = float(os.getenv("EXCHANGE_TAKER_FEE", "0.0005"))
     SLIPPAGE_BUFFER    = float(os.getenv("SLIPPAGE_BUFFER", "0.0004"))
-    MIN_RR_RATIO       = float(os.getenv("MIN_RR_RATIO", "0.8"))
+    MIN_RR_RATIO       = float(os.getenv("MIN_RR_RATIO", "2.0"))
 
     E1_IMBALANCE_THRESHOLD    = float(os.getenv("E1_IMBALANCE_THRESHOLD", "0.15"))
     E2_MOMENTUM_THRESHOLD     = float(os.getenv("E2_MOMENTUM_THRESHOLD", "0.55"))
