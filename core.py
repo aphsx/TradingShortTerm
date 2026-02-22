@@ -142,8 +142,13 @@ class RiskManager:
             return {"action": "NO_TRADE", "reason": f"Target Profit ({tp1_distance:.4f}) too small. Fails {min_tp_pct*100:.3f}% dynamic fee+slippage test."}
             
         # R:R Check - Dynamic floor for high win-rate scalping
-        if sl_distance == 0 or (tp1_distance / sl_distance) < MIN_RR_RATIO:
-            return {"action": "NO_TRADE", "reason": f"R:R ({tp1_distance/sl_distance if sl_distance else 0:.2f}) < {MIN_RR_RATIO} min"}
+        # CRITICAL: Check sl_distance first to prevent division by zero
+        if sl_distance <= 0:
+            return {"action": "NO_TRADE", "reason": f"Invalid SL distance: {sl_distance:.4f}"}
+
+        rr_ratio = tp1_distance / sl_distance
+        if rr_ratio < MIN_RR_RATIO:
+            return {"action": "NO_TRADE", "reason": f"R:R ({rr_ratio:.2f}) < {MIN_RR_RATIO} min"}
         
         pos_size_usdt = risk_amount / (sl_distance / current_price) if sl_distance > 0 else 0
         
@@ -216,10 +221,18 @@ class Executor:
 
         sl_price = entry_price + risk_params['sl_distance'] if side == "SHORT" else entry_price - risk_params['sl_distance']
         tp_price = entry_price - risk_params['tp1_distance'] if side == "SHORT" else entry_price + risk_params['tp1_distance']
-        
-        # Determine precision based on symbol (approximate mapping for simplicity)
-        qty_precision = 3 if symbol == "BTCUSDT" else 2 if "ETH" in symbol else 0
-        price_precision = 1 if symbol == "BTCUSDT" else 2 if "ETH" in symbol else 4
+
+        # Fetch dynamic precision from exchange market info
+        ccxt_symbol = f"{symbol.replace('USDT', '')}/USDT:USDT" if ":" not in symbol else symbol
+        try:
+            market = self.exchange.market(ccxt_symbol)
+            qty_precision = market['precision']['amount']
+            price_precision = market['precision']['price']
+        except Exception as e:
+            # Fallback to safe defaults if market info unavailable
+            print(f"⚠ Warning: Could not fetch market precision for {ccxt_symbol}, using defaults: {e}")
+            qty_precision = 3
+            price_precision = 2
         
         order_details = {
             "symbol": symbol,
@@ -236,16 +249,46 @@ class Executor:
         }
         
         import time
+        import asyncio
         start_time = time.time()
         try:
-            print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Adjusting leverage to {int(risk_params['leverage'])}x for {symbol}...")
+            target_leverage = int(risk_params['leverage'])
+            print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Adjusting leverage to {target_leverage}x for {symbol}...")
             # For binanceusdm module, it often requires the format BTC/USDT:USDT.
             if ":" not in symbol:
                  ccxt_symbol = f"{symbol.replace('USDT', '')}/USDT:USDT"
             else:
                  ccxt_symbol = symbol
-                 
-            await self.exchange.set_leverage(int(risk_params['leverage']), ccxt_symbol)
+
+            # Set leverage with timeout protection
+            try:
+                await asyncio.wait_for(
+                    self.exchange.set_leverage(target_leverage, ccxt_symbol),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                raise Exception(f"Leverage setting timed out after 5s for {ccxt_symbol}")
+
+            # Verify leverage was actually set (prevent race condition)
+            try:
+                positions = await asyncio.wait_for(
+                    self.exchange.fetch_positions([ccxt_symbol]),
+                    timeout=3.0
+                )
+                current_leverage = None
+                for pos in positions:
+                    if pos['symbol'] == ccxt_symbol:
+                        current_leverage = pos.get('leverage')
+                        break
+
+                if current_leverage and abs(float(current_leverage) - target_leverage) > 0.1:
+                    raise Exception(f"Leverage verification failed: expected {target_leverage}x, got {current_leverage}x")
+
+                print(f"✓ Leverage verified: {target_leverage}x")
+            except asyncio.TimeoutError:
+                print(f"⚠ Warning: Leverage verification timed out, proceeding with caution")
+            except Exception as e:
+                print(f"⚠ Warning: Could not verify leverage: {e}")
             
             ccxt_side = 'buy' if side == 'LONG' else 'sell'
             ord_type = 'limit'
@@ -259,13 +302,17 @@ class Executor:
             # Trade-off: Order may not fill if price doesn't reach our level
             print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Placing POST-ONLY {side} limit @ {order_details['price']:.2f} (Predicted from OFI velocity)")
 
-            res = await self.exchange.create_order(
-                symbol=ccxt_symbol,
-                type=ord_type,
-                side=ccxt_side,
-                amount=order_details["quantity"],
-                price=order_details["price"],
-                params={'timeInForce': 'GTX', 'clientOrderId': f"V7_{int(time.time()*1000)}"}
+            # Create order with timeout protection (prevent hanging)
+            res = await asyncio.wait_for(
+                self.exchange.create_order(
+                    symbol=ccxt_symbol,
+                    type=ord_type,
+                    side=ccxt_side,
+                    amount=order_details["quantity"],
+                    price=order_details["price"],
+                    params={'timeInForce': 'GTX', 'clientOrderId': f"V7_{int(time.time()*1000)}"}
+                ),
+                timeout=10.0  # 10 second timeout for order placement
             )
             
             latency = int((time.time() - start_time) * 1000)
