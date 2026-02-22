@@ -22,19 +22,20 @@ class DecisionEngine:
         e1, e2, e3, e4 = signals.get('e1', {}), signals.get('e2', {}), signals.get('e3', {}), signals.get('e4', {})
         
         def get_dir_val(d):
+            if not d: return 0
             if d.upper() in ["BUY_PRESSURE", "MOMENTUM_LONG", "LONG", "CROWD_SHORT"]: return 1
             if d.upper() in ["SELL_PRESSURE", "MOMENTUM_SHORT", "SHORT", "CROWD_LONG"]: return -1
             return 0
             
-        d1 = get_dir_val(e1.get('direction', ''))
-        d2 = get_dir_val(e2.get('direction', ''))
-        d3 = get_dir_val(e3.get('direction', ''))
-        d4 = get_dir_val(e4.get('direction', ''))
+        d1 = get_dir_val(e1.get('direction'))
+        d2 = get_dir_val(e2.get('direction'))
+        d3 = get_dir_val(e3.get('direction'))
+        d4 = get_dir_val(e4.get('direction'))
         
-        s1 = d1 * e1.get('strength', 0) * e1.get('conviction', 1.0)
-        s2 = d2 * e2.get('strength', 0)
-        s3 = d3 * e3.get('strength', 0)
-        s4 = d4 * e4.get('strength', 0)
+        s1 = d1 * (e1.get('strength') or 0) * (e1.get('conviction') or 1.0)
+        s2 = d2 * (e2.get('strength') or 0)
+        s3 = d3 * (e3.get('strength') or 0)
+        s4 = d4 * (e4.get('strength') or 0)
         
         final_score = s1*w1 + s2*w2 + s3*w3 + s4*w4
         
@@ -194,12 +195,12 @@ class Executor:
             order_details["status"] = "SUCCESS"
             order_details["execution_type"] = ord_type
             
-            print(f"✅ CCXT Order Executed in {latency}ms! Order ID: {order_details['order_id']}")
+            print(f"CCXT Order Executed in {latency}ms! Order ID: {order_details['order_id']}")
             order_logger.info(f"SUCCESS | {json.dumps(order_details)}")
             
         except Exception as e:
             latency = int((time.time() - start_time) * 1000)
-            print(f"❌ CCXT Error sending order after {latency}ms: {e}")
+            print(f"CCXT Error sending order after {latency}ms: {e}")
             order_details["api_latency_ms"] = latency
             order_details["status"] = "API_ERROR"
             order_details["error_type"] = type(e).__name__

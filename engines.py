@@ -4,6 +4,16 @@ class Engine1OrderFlow:
     def process(self, orderbook, ticks):
         bids = orderbook.get("bids", [])
         asks = orderbook.get("asks", [])
+        if not bids or not asks:
+            return {
+                "direction": None,
+                "strength": None,
+                "conviction": None,
+                "imbalance": None,
+                "cvd_slope": None,
+                "micro_price": None
+            }
+            
         imbalance = calculate_imbalance(bids, asks)
         
         direction = "NEUTRAL"
@@ -22,7 +32,15 @@ class Engine1OrderFlow:
 class Engine2Tick:
     def process(self, ticks):
         if not ticks:
-            return {"direction": "NEUTRAL", "strength": 0, "velocity_ratio": 1.0, "streak": 0, "volume_spike": False}
+            return {
+                "direction": None, 
+                "strength": None, 
+                "velocity_ratio": None, 
+                "aggressor_ratio": None,
+                "streak": None, 
+                "volume_spike": None,
+                "spike_ratio": None
+            }
         buy_vol = sum(float(t.get('q', 0)) for t in ticks if not t.get('m', False))
         sell_vol = sum(float(t.get('q', 0)) for t in ticks if t.get('m', False))
         
@@ -45,7 +63,13 @@ class Engine2Tick:
 class Engine3Technical:
     def process(self, klines):
         if not klines or len(klines) < 20:
-            return {"direction": "NEUTRAL", "strength": 0, "atr": 0, "bb_zone": "MIDDLE", "rsi": 50}
+            return {
+                "direction": None, 
+                "strength": None, 
+                "atr": None, 
+                "bb_zone": None, 
+                "rsi": None
+            }
         
         closes = [float(k[4]) for k in klines]
         highs = [float(k[2]) for k in klines]
@@ -73,6 +97,12 @@ class Engine3Technical:
 
 class Engine4Sentiment:
     def process(self, market_data):
+        if not market_data:
+            return {
+                "direction": None,
+                "strength": None,
+                "liq_proximity_score": None
+            }
         return {
             "direction": "BALANCED",
             "strength": 0,
@@ -81,6 +111,14 @@ class Engine4Sentiment:
 
 class Engine5Regime:
     def process(self, klines):
+        if not klines or len(klines) < 20:
+            return {
+                "tradeable": False,
+                "regime": None,
+                "spread_ok": False,
+                "weight_overrides": {"e1": 0.35, "e2": 0.25, "e3": 0.20, "e4": 0.12},
+                "param_overrides": {"tp_multiplier": 1.0, "sl_multiplier": 1.0, "leverage_max": 12}
+            }
         return {
             "tradeable": True,
             "regime": "NORMAL_VOL",
