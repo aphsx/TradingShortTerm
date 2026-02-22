@@ -541,10 +541,19 @@ class Engine5Regime:
         
         # Granular regime detection
         regime = "RANGING"
-        if adx_14 < 15: regime = "CHOPPY"
-        elif adx_14 < 25: regime = "RANGING"
-        elif adx_14 < 40: regime = "TRENDING"
-        else: regime = "STRONG_TREND"
+        if adx_14 < 15: 
+            regime = "CHOPPY"
+        elif adx_14 < 25: 
+            regime = "RANGING"
+        else:
+            # Determine direction using short-term EMA vs long-term EMA
+            # For 15m klines, 5 vs 20 captures mid-term momentum
+            ema_fast = sum(closes[-5:]) / 5
+            ema_slow = sum(closes[-20:]) / 20
+            direction = "UP" if ema_fast > ema_slow else "DOWN"
+            
+            level = "STRONG_TREND" if adx_14 >= 40 else "TRENDING"
+            regime = f"{level}_{direction}"
         
         # 3. Tradeability & Spread Proxy
         spread_proxy_pct = (highs[-1] - lows[-1]) / current_price if current_price else 0
@@ -560,13 +569,13 @@ class Engine5Regime:
         weights = {"e1": 0.35, "e2": 0.25, "e3": 0.20, "e4": 0.12}
         params = {"tp_multiplier": 0.8, "sl_multiplier": 1.0, "leverage_max": 20}
         
-        if regime == "STRONG_TREND":
+        if "STRONG_TREND" in regime:
             weights = {"e1": 0.45, "e2": 0.30, "e3": 0.05, "e4": 0.10}
             params["tp_multiplier"] = 1.5   # Let winners run
             params["sl_multiplier"] = 0.8   # Tighter SL (trend protects)
             params["leverage_max"] = 25
             
-        elif regime == "TRENDING":
+        elif "TRENDING" in regime:
             weights = {"e1": 0.40, "e2": 0.30, "e3": 0.10, "e4": 0.10}
             params["tp_multiplier"] = 1.0
             params["leverage_max"] = 20

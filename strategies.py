@@ -54,8 +54,8 @@ class StrategyA:
         
         # Regime adjustment
         regime = e5_filter.get('regime', '')
-        if regime == "STRONG_TREND": score += 0.15
-        elif regime == "TRENDING": score += 0.1
+        if "STRONG_TREND" in regime: score += 0.15
+        elif "TRENDING" in regime: score += 0.1
         elif regime == "RANGING": score -= 0.2
         elif regime == "CHOPPY": score -= 0.3
         
@@ -111,8 +111,8 @@ class StrategyB:
         phase = e5_filter.get('regime', '')
         if phase == "RANGING": score += 0.15
         elif phase == "CHOPPY": score += 0.1
-        elif phase == "TRENDING": score -= 0.2
-        elif phase == "STRONG_TREND": score -= 0.4  # Don't fade strong trends
+        elif "TRENDING" in phase: score -= 0.2
+        elif "STRONG_TREND" in phase: score -= 0.4  # Don't fade strong trends
         
         return max(0, min(1.5, score))
 

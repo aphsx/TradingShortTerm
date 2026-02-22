@@ -38,13 +38,19 @@ class DecisionEngine:
         if not e5_filter.get('tradeable', True) or not e5_filter.get('spread_ok', True):
             return {"action": "NO_TRADE", "final_score": final_score, "reason": "E5 Filter: Not tradeable or spread too high"}
 
-        # === PREDICTIVE SIGNAL FILTERS — BYPASSED FOR BAR-BACKTEST ===
+        # === PREDICTIVE SIGNAL FILTERS ===
         vpin = e1.get('vpin', 0.5)
         ofi_velocity = e1.get('ofi_velocity', 2.0)
         alignment = e2.get('alignment', 0.5)
 
-        # (Filters temporarily disabled for backtest flow validation)
-        # if vpin < DECISION_VPIN_MIN: ...
+        if vpin < DECISION_VPIN_MIN:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Toxic flow (VPIN {vpin:.2f} < {DECISION_VPIN_MIN})"}
+            
+        if abs(ofi_velocity) < DECISION_OFI_VELOCITY_MIN:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Weak momentum (OFI Vel {abs(ofi_velocity):.2f} < {DECISION_OFI_VELOCITY_MIN})"}
+            
+        if alignment < DECISION_ALIGNMENT_MIN:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low TF alignment ({alignment:.2f} < {DECISION_ALIGNMENT_MIN})"}
 
         # === SQUEEZE BREAKOUT BOOST ===
         # When BB inside KC (volatility compressed), breakout signal is amplified
@@ -67,6 +73,13 @@ class DecisionEngine:
         # E1 must not oppose
         if d1 == -action_val:
             return {"action": "NO_TRADE", "final_score": final_score, "reason": "E1 (OrderFlow) opposes direction"}
+
+        # === STRICT TREND ALIGNMENT (BIG TREND FILTER) ===
+        regime = e5_filter.get('regime', 'UNK')
+        if regime == "STRONG_TREND_UP" and action == "SHORT":
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": "Against strong 15m UPTREND"}
+        if regime == "STRONG_TREND_DOWN" and action == "LONG":
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": "Against strong 15m DOWNTREND"}
         
         score_a = StrategyA().evaluate(signals, e5_filter)
         score_b = StrategyB().evaluate(signals, e5_filter)
@@ -119,7 +132,7 @@ class RiskManager:
         self.loss_cooldown_seconds = 60       # 60s pause after consecutive losses
         self.kelly_fraction = 0.25            # Use 25% Kelly (quarter-Kelly for safety)
         
-    def _calculate_kelly_leverage(self, confidence, base_leverage, e5_max_leverage):
+    def _calculate_kelly_leverage(self, confidence, base_leverage, e5_max_leverage, payoff_ratio=1.5):
         """
         Kelly Criterion: f* = (p * b - q) / b
         where p = win probability, b = payoff ratio (win/loss), q = 1-p
@@ -127,13 +140,10 @@ class RiskManager:
         Quarter-Kelly is used for safety (reduces variance by 75% 
         while keeping 50% of the growth rate).
         """
-        # Estimate win probability from confidence (calibrated)
-        # Confidence 50% → ~52% win rate, 90% → ~65% win rate
-        win_prob = 0.50 + (confidence / 100.0) * 0.18
-        win_prob = max(0.48, min(0.70, win_prob))
-        
-        # Estimate payoff ratio from strategy (TP/SL ratio)
-        payoff_ratio = 1.5  # Default assumption
+        # Estimate win probability from confidence (calibrated for current 21% win rate)
+        # Confidence 50% -> ~38% win rate, 90% -> ~50% win rate
+        win_prob = 0.35 + (confidence / 100.0) * 0.15
+        win_prob = max(0.25, min(0.60, win_prob))
         
         loss_prob = 1.0 - win_prob
         
@@ -277,7 +287,7 @@ class RiskManager:
         
         # === Kelly Criterion Leverage ===
         e5_max_lev = e5_param.get('leverage_max', MAX_LEVERAGE)
-        leverage = self._calculate_kelly_leverage(confidence, MIN_LEVERAGE, e5_max_lev)
+        leverage = self._calculate_kelly_leverage(confidence, MIN_LEVERAGE, e5_max_lev, payoff_ratio=rr_ratio)
         
         # Kelly says don't trade (negative edge)
         if leverage <= 0:
