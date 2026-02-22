@@ -125,48 +125,116 @@ def calculate_depth_imbalance_multi(bids, asks):
     }
 
 def calculate_adx(highs, lows, closes, period=14):
-    if len(closes) < period * 2:
+    """
+    Calculate ADX (Average Directional Index) using Wilder's smoothing.
+    
+    Properly smooths +DI, -DI, and DX series using Wilder's method
+    (alpha = 1/period) instead of the broken single-DX approach.
+    
+    Returns:
+        float: ADX value (0-100). >25 = trending, <20 = ranging/choppy
+    """
+    n = len(closes)
+    if n < period * 2 + 1:
         return np.nan
-        
-    tr = []
-    plus_dm = []
-    minus_dm = []
-    
-    for i in range(1, len(closes)):
-        h = highs[i]
-        l = lows[i]
-        ph = highs[i-1]
-        pl = lows[i-1]
-        c = closes[i-1]
-        
-        tr.append(max(h - l, abs(h - c), abs(l - c)))
-        
-        up_move = h - ph
-        down_move = pl - l
-        
-        if up_move > down_move and up_move > 0:
-            plus_dm.append(up_move)
+
+    # Step 1: Calculate True Range, +DM, -DM series
+    tr = np.empty(n - 1)
+    plus_dm = np.empty(n - 1)
+    minus_dm = np.empty(n - 1)
+
+    for i in range(1, n):
+        h, l, pc = highs[i], lows[i], closes[i - 1]
+        tr[i - 1] = max(h - l, abs(h - pc), abs(l - pc))
+
+        up_move = highs[i] - highs[i - 1]
+        down_move = lows[i - 1] - lows[i]
+
+        plus_dm[i - 1] = up_move if (up_move > down_move and up_move > 0) else 0.0
+        minus_dm[i - 1] = down_move if (down_move > up_move and down_move > 0) else 0.0
+
+    # Step 2: Wilder's smoothing (alpha = 1/period)
+    # Initial seed = SMA of first `period` bars
+    atr_s = np.mean(tr[:period])
+    pdm_s = np.mean(plus_dm[:period])
+    mdm_s = np.mean(minus_dm[:period])
+
+    dx_values = []
+
+    for i in range(period, len(tr)):
+        atr_s = atr_s - (atr_s / period) + tr[i]
+        pdm_s = pdm_s - (pdm_s / period) + plus_dm[i]
+        mdm_s = mdm_s - (mdm_s / period) + minus_dm[i]
+
+        if atr_s == 0:
+            continue
+
+        plus_di = 100.0 * pdm_s / atr_s
+        minus_di = 100.0 * mdm_s / atr_s
+        di_sum = plus_di + minus_di
+
+        if di_sum == 0:
+            dx_values.append(0.0)
         else:
-            plus_dm.append(0)
-            
-        if down_move > up_move and down_move > 0:
-            minus_dm.append(down_move)
-        else:
-            minus_dm.append(0)
-            
-    atr = calculate_ema(tr, period)
-    if atr == 0 or np.isnan(atr): return 0
-    
-    plus_di = 100 * (calculate_ema(plus_dm, period) / atr)
-    minus_di = 100 * (calculate_ema(minus_dm, period) / atr)
-    
-    if (plus_di + minus_di) == 0: return 0
-    
-    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-    
-    # Simple ADX (could use EMA of DX, but average works for approximation)
-    adx = np.mean([dx] * period) # Simplified
+            dx_values.append(100.0 * abs(plus_di - minus_di) / di_sum)
+
+    if len(dx_values) < period:
+        return np.mean(dx_values) if dx_values else 0.0
+
+    # Step 3: Smooth DX with Wilder's method → ADX
+    adx = np.mean(dx_values[:period])
+    for dx_val in dx_values[period:]:
+        adx = adx - (adx / period) + dx_val
+
     return adx
+
+
+def calculate_macd(data, fast=12, slow=26, signal=9):
+    """
+    Calculate MACD (Moving Average Convergence Divergence).
+    
+    Returns:
+        tuple: (macd_line, signal_line, histogram) or (nan, nan, nan) if insufficient data
+    """
+    if len(data) < slow + signal:
+        return np.nan, np.nan, np.nan
+
+    fast_ema = calculate_ema_array(data, fast)
+    slow_ema = calculate_ema_array(data, slow)
+
+    # Align arrays (slow_ema is shorter)
+    offset = len(fast_ema) - len(slow_ema)
+    macd_line = [f - s for f, s in zip(fast_ema[offset:], slow_ema)]
+
+    if len(macd_line) < signal:
+        return np.nan, np.nan, np.nan
+
+    signal_line = calculate_ema_array(macd_line, signal)
+    offset2 = len(macd_line) - len(signal_line)
+
+    histogram = macd_line[-1] - signal_line[-1]
+    return macd_line[-1], signal_line[-1], histogram
+
+
+def calculate_keltner_channels(highs, lows, closes, ema_period=20, atr_period=14, multiplier=1.5):
+    """
+    Calculate Keltner Channels for volatility-adjusted support/resistance.
+    
+    Returns:
+        tuple: (upper, middle, lower) channel values
+    """
+    if len(closes) < max(ema_period, atr_period + 1):
+        return np.nan, np.nan, np.nan
+
+    middle = calculate_ema(closes, ema_period)
+    atr_val = calculate_atr(highs, lows, closes, atr_period)
+
+    if np.isnan(middle) or np.isnan(atr_val):
+        return np.nan, np.nan, np.nan
+
+    upper = middle + multiplier * atr_val
+    lower = middle - multiplier * atr_val
+    return upper, middle, lower
 
 def calculate_percentiles(data_list, percentiles=[20, 80, 95]):
     if not data_list or len(data_list) < 5:
