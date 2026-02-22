@@ -102,14 +102,131 @@ class DecisionEngine:
         }
 
 class RiskManager:
+    def __init__(self):
+        # === Trade Performance Tracking ===
+        self.trade_results = []       # List of PnL results
+        self.daily_pnl = 0.0          # Running daily PnL
+        self.consecutive_losses = 0   # Count for cooldown
+        self.last_trade_time = 0      # For cooldown timer
+        self.daily_reset_hour = 0     # UTC hour to reset daily PnL
+        
+        # === Configurable Risk Limits ===
+        self.max_daily_drawdown_pct = 0.05   # Stop trading at 5% daily loss
+        self.max_consecutive_losses = 4       # Cooldown after 4 losses
+        self.loss_cooldown_seconds = 60       # 60s pause after consecutive losses
+        self.kelly_fraction = 0.25            # Use 25% Kelly (quarter-Kelly for safety)
+        
+    def _calculate_kelly_leverage(self, confidence, base_leverage, e5_max_leverage):
+        """
+        Kelly Criterion: f* = (p * b - q) / b
+        where p = win probability, b = payoff ratio (win/loss), q = 1-p
+        
+        Quarter-Kelly is used for safety (reduces variance by 75% 
+        while keeping 50% of the growth rate).
+        """
+        # Estimate win probability from confidence (calibrated)
+        # Confidence 50% → ~52% win rate, 90% → ~65% win rate
+        win_prob = 0.50 + (confidence / 100.0) * 0.18
+        win_prob = max(0.48, min(0.70, win_prob))
+        
+        # Estimate payoff ratio from strategy (TP/SL ratio)
+        payoff_ratio = 1.5  # Default assumption
+        
+        loss_prob = 1.0 - win_prob
+        
+        # Kelly formula
+        if payoff_ratio <= 0:
+            return MIN_LEVERAGE
+            
+        kelly_f = (win_prob * payoff_ratio - loss_prob) / payoff_ratio
+        
+        # If Kelly is negative, don't trade (edge is negative)
+        if kelly_f <= 0:
+            return 0  # Signal to not trade
+        
+        # Apply fractional Kelly for safety
+        safe_kelly = kelly_f * self.kelly_fraction
+        
+        # Convert Kelly fraction to leverage
+        # kelly_f = 0.10 means risk 10% of capital → at base risk 1%, that's 10x leverage
+        kelly_leverage = safe_kelly / RISK_PER_TRADE if RISK_PER_TRADE > 0 else base_leverage
+        
+        # Clamp to configured bounds
+        leverage = max(MIN_LEVERAGE, min(kelly_leverage, e5_max_leverage, MAX_LEVERAGE))
+        
+        return leverage
+    
+    def _apply_loss_cooldown(self):
+        """
+        Anti-martingale: reduce position size after consecutive losses.
+        Returns a multiplier (0.0 to 1.0) for position sizing.
+        """
+        import time
+        
+        # Check cooldown timer
+        if self.consecutive_losses >= self.max_consecutive_losses:
+            elapsed = time.time() - self.last_trade_time
+            if elapsed < self.loss_cooldown_seconds:
+                return 0.0  # Don't trade during cooldown
+            else:
+                # Cooldown expired, reset but still trade smaller
+                self.consecutive_losses = max(0, self.consecutive_losses - 1)
+        
+        # Scale down after losses: 1 loss = 80%, 2 = 60%, 3 = 40%
+        if self.consecutive_losses == 0:
+            return 1.0
+        elif self.consecutive_losses == 1:
+            return 0.80
+        elif self.consecutive_losses == 2:
+            return 0.60
+        elif self.consecutive_losses == 3:
+            return 0.40
+        else:
+            return 0.25  # Minimum 25% size
+    
+    def _check_daily_drawdown(self):
+        """Check if daily drawdown limit has been hit."""
+        max_loss = BASE_BALANCE * self.max_daily_drawdown_pct
+        if self.daily_pnl <= -max_loss:
+            return False  # Stop trading
+        return True  # OK to trade
+    
+    def record_trade_result(self, pnl):
+        """Call this after each trade closes to update tracking."""
+        import time
+        self.trade_results.append(pnl)
+        self.daily_pnl += pnl
+        self.last_trade_time = time.time()
+        
+        if pnl < 0:
+            self.consecutive_losses += 1
+        else:
+            self.consecutive_losses = 0  # Reset on win
+    
+    def reset_daily(self):
+        """Call at the start of each trading day."""
+        self.daily_pnl = 0.0
+
     def calculate(self, decision, current_price, atr, e5_param):
         confidence = decision.get("confidence", 0)
         strategy = decision.get("strategy", "A")
         
+        # === Daily Drawdown Check ===
+        if not self._check_daily_drawdown():
+            return {"action": "NO_TRADE", "reason": f"Daily drawdown limit hit ({self.daily_pnl:.2f} USDT). Trading paused."}
+        
+        # === Loss Cooldown Check ===
+        cooldown_multiplier = self._apply_loss_cooldown()
+        if cooldown_multiplier <= 0:
+            return {"action": "NO_TRADE", "reason": f"Loss cooldown active ({self.consecutive_losses} consecutive losses). Wait {self.loss_cooldown_seconds}s."}
+        
         risk_pct = RISK_PER_TRADE
-        if confidence >= 80: risk_pct = 0.020 # Aggressive short term sizing
+        if confidence >= 80: risk_pct = 0.020 
         elif confidence >= 60: risk_pct = 0.012
         else: risk_pct = 0.005
+        
+        # Apply cooldown scaling
+        risk_pct *= cooldown_multiplier
         
         risk_amount = BASE_BALANCE * risk_pct
         atr_multiplier_sl = e5_param.get('sl_multiplier', 1.0)
@@ -121,24 +238,22 @@ class RiskManager:
         tp1_distance = 0
         
         if strategy == "A":
-            sl_distance = safe_atr * 0.4 * atr_multiplier_sl # Extremely tight SL for momentum failures
-            tp1_distance = safe_atr * 0.6 * atr_multiplier_tp # Quick TP for breakout scalps
+            sl_distance = safe_atr * 0.4 * atr_multiplier_sl
+            tp1_distance = safe_atr * 0.6 * atr_multiplier_tp
         elif strategy == "B":
             sl_distance = safe_atr * 0.5 * atr_multiplier_sl
-            tp1_distance = safe_atr * 0.8 * atr_multiplier_tp # Mean reversion TP
+            tp1_distance = safe_atr * 0.8 * atr_multiplier_tp
         elif strategy == "C":
-            sl_distance = safe_atr * 0.3 * atr_multiplier_sl # Lightning tight SL for liquidation clusters
+            sl_distance = safe_atr * 0.3 * atr_multiplier_sl
             tp1_distance = safe_atr * 0.5 * atr_multiplier_tp
             
-        # Min TP check (Dynamic calculation based on Exchange Taker Fees and Slippage Buffer defined in .env)
-        # For a scalping strategy, if the actual price movement required to hit TP is less than the round-trip fee + slip, it's just paying fees.
+        # Min TP check
         min_tp_pct = (EXCHANGE_TAKER_FEE * 2) + SLIPPAGE_BUFFER 
         min_tp = current_price * min_tp_pct
         if tp1_distance < min_tp:
-            return {"action": "NO_TRADE", "reason": f"Target Profit ({tp1_distance:.4f}) too small. Fails {min_tp_pct*100:.3f}% dynamic fee+slippage test."}
+            return {"action": "NO_TRADE", "reason": f"Target Profit ({tp1_distance:.4f}) too small. Fails {min_tp_pct*100:.3f}% fee+slippage test."}
             
-        # R:R Check - Dynamic floor for high win-rate scalping
-        # CRITICAL: Check sl_distance first to prevent division by zero
+        # R:R Check
         if sl_distance <= 0:
             return {"action": "NO_TRADE", "reason": f"Invalid SL distance: {sl_distance:.4f}"}
 
@@ -148,34 +263,35 @@ class RiskManager:
         
         pos_size_usdt = risk_amount / (sl_distance / current_price) if sl_distance > 0 else 0
         
-        # --- Leverage Clamping ---
-        # User requested exact bounds: 10x minimum, 30x maximum
-        leverage = min(pos_size_usdt / (BASE_BALANCE * 0.1), e5_param.get('leverage_max', MAX_LEVERAGE), MAX_LEVERAGE)
-        leverage = max(leverage, MIN_LEVERAGE)
+        # === Kelly Criterion Leverage ===
+        e5_max_lev = e5_param.get('leverage_max', MAX_LEVERAGE)
+        leverage = self._calculate_kelly_leverage(confidence, MIN_LEVERAGE, e5_max_lev)
         
-        # --- Liquidation Prevention Squeeze ---
-        # At 30x leverage, Binance margin is ~3.33%. 
-        # If sl_distance > 3%, the position will liquidate *before* it hits SL.
-        max_safe_sl_pct = (1.0 / leverage) * 0.8 # Clamp SL to max 80% of margin allowed before liquidation
+        # Kelly says don't trade (negative edge)
+        if leverage <= 0:
+            return {"action": "NO_TRADE", "reason": "Kelly Criterion: negative edge detected, skipping."}
+        
+        # === Liquidation Prevention Squeeze ===
+        max_safe_sl_pct = (1.0 / leverage) * 0.8
         max_safe_sl_dist = current_price * max_safe_sl_pct
         
         if sl_distance > max_safe_sl_dist:
-            # Squeeze SL down to the safe liquidation-proof limit
             sl_scale_factor = max_safe_sl_dist / sl_distance
             sl_distance = max_safe_sl_dist
-            # Squeeze TP in tandem to maintain original Profit/Loss ratio
             tp1_distance = tp1_distance * sl_scale_factor 
             
-            # Re-check TP against exchange fees after the squeeze
             if tp1_distance < min_tp:
-                return {"action": "NO_TRADE", "reason": f"Squeezed 30x SL forced TP too small for fees."}
+                return {"action": "NO_TRADE", "reason": f"Squeezed SL forced TP too small for fees."}
         
         return {
             "position_size_usdt": pos_size_usdt,
             "leverage": leverage,
             "sl_distance": sl_distance,
             "tp1_distance": tp1_distance,
-            "risk_amount": risk_amount
+            "risk_amount": risk_amount,
+            "cooldown_multiplier": cooldown_multiplier,
+            "kelly_leverage": leverage,
+            "daily_pnl": self.daily_pnl
         }
 
 class Executor:
