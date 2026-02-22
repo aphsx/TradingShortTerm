@@ -38,46 +38,41 @@ class DecisionEngine:
         if not e5_filter.get('tradeable', True) or not e5_filter.get('spread_ok', True):
             return {"action": "NO_TRADE", "final_score": final_score, "reason": "E5 Filter: Not tradeable or spread too high"}
 
-        # === PREDICTIVE SIGNAL FILTERS (High-Latency Optimization) ===
-        # For 30-80ms latency environments, we need leading indicators
-        # that predict price movement 0.5-2 seconds ahead
-
+        # === PREDICTIVE SIGNAL FILTERS ===
         vpin = e1.get('vpin', 0.0)
         ofi_velocity = e1.get('ofi_velocity', 0.0)
         alignment = e2.get('alignment', 0.0)
 
-        # VPIN Filter: Require informed trading activity
-        # Research shows VPIN > 0.4 indicates informed traders active
         if vpin < DECISION_VPIN_MIN:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low VPIN ({vpin:.2f} < {DECISION_VPIN_MIN}) - no informed trading detected"}
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low VPIN ({vpin:.2f} < {DECISION_VPIN_MIN})"}
 
-        # OFI Velocity Filter: Require momentum building
-        # |velocity| > 1.5 indicates orderbook imbalance accelerating
         if abs(ofi_velocity) < DECISION_OFI_VELOCITY_MIN:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low OFI velocity ({ofi_velocity:.2f} < {DECISION_OFI_VELOCITY_MIN}) - momentum not building"}
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low OFI velocity ({ofi_velocity:.2f} < {DECISION_OFI_VELOCITY_MIN})"}
 
-        # Multi-timeframe Alignment Filter: Require consensus
-        # Alignment > 0.4 means 1s, 5s, 15s windows agree on direction
         if alignment < DECISION_ALIGNMENT_MIN:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low momentum alignment ({alignment:.2f} < {DECISION_ALIGNMENT_MIN}) - timeframes disagree"}
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low alignment ({alignment:.2f} < {DECISION_ALIGNMENT_MIN})"}
 
-        # === END PREDICTIVE FILTERS ===
+        # === SQUEEZE BREAKOUT BOOST ===
+        # When BB inside KC (volatility compressed), breakout signal is amplified
+        squeeze = e3.get('squeeze', False)
+        if squeeze:
+            # Boost final_score by 30% during squeeze (high-probability breakout)
+            final_score *= 1.30
+            logger.info(f"🔥 SQUEEZE detected — score boosted to {final_score:.3f}")
 
-        # Reduced strictness for short-term active scalping (Dynamic)
         if abs(final_score) < STRAT_MIN_SCORE:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Final score {abs(final_score):.2f} < {STRAT_MIN_SCORE} min"}
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Score {abs(final_score):.2f} < {STRAT_MIN_SCORE}"}
 
         action = "LONG" if final_score > 0 else "SHORT"
         action_val = 1 if action == "LONG" else -1
 
-        # Agreement Check: Reduced for aggressive short-term trading (Dynamic)
         agreements = sum(1 for d in [d1, d2, d3, d4] if d == action_val)
         if agreements < STRAT_AGREEMENT_REQ:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Only {agreements} engines agree (need {STRAT_AGREEMENT_REQ} for scalping)"}
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Only {agreements} engines agree (need {STRAT_AGREEMENT_REQ})"}
 
-        # E1 Check
+        # E1 must not oppose
         if d1 == -action_val:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": "E1 (Primary) opposes the direction"}
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": "E1 (OrderFlow) opposes direction"}
         
         score_a = StrategyA().evaluate(signals, e5_filter)
         score_b = StrategyB().evaluate(signals, e5_filter)
@@ -86,19 +81,33 @@ class DecisionEngine:
         strategies = [("A", score_a), ("B", score_b), ("C", score_c)]
         best_strategy = max(strategies, key=lambda x: x[1])
         
-        if best_strategy[1] < 0.4:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": "No clear strategy match (score < 0.4)"}
+        if best_strategy[1] < 0.3:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"No strategy match (best: {best_strategy[1]:.2f} < 0.3)"}
             
-        agreement_bonus = 1.0 + (agreements - 3) * 0.1
-        strategy_clarity = best_strategy[1] / 1.0
-        confidence = abs(final_score) * agreement_bonus * strategy_clarity * 100
+        # === ENHANCED CONFIDENCE CALIBRATION ===
+        agreement_bonus = 1.0 + (agreements - 2) * 0.15
+        strategy_clarity = best_strategy[1]
+        
+        # VPIN/OFI confidence boost (strong predictive signals = higher confidence)
+        predictive_boost = 1.0
+        if vpin > 0.6: predictive_boost += 0.15
+        if abs(ofi_velocity) > 3.0: predictive_boost += 0.15
+        if alignment > 0.6: predictive_boost += 0.10
+        if squeeze: predictive_boost += 0.20
+        
+        confidence = abs(final_score) * agreement_bonus * strategy_clarity * predictive_boost * 100
         
         return {
             "action": action,
             "strategy": best_strategy[0],
             "confidence": min(confidence, 100),
             "final_score": final_score,
-            "reason": f"Agreements: {agreements}, Strategy: {best_strategy[0]}"
+            "reason": f"Agreements: {agreements}, Strategy: {best_strategy[0]}, Squeeze: {squeeze}",
+            # Pass-through data for Executor's smart limit pricing
+            "ofi_velocity": ofi_velocity,
+            "atr": e3.get('atr', 0),
+            "vpin": vpin,
+            "squeeze": squeeze
         }
 
 class RiskManager:
