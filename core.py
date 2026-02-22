@@ -1,8 +1,7 @@
 import logging
 import json
 import ccxt.async_support as ccxt
-import ccxt.async_support as ccxt
-from config import BASE_BALANCE, RISK_PER_TRADE, MAX_LEVERAGE, API_KEY, SECRET_KEY, EXCHANGE_TAKER_FEE, SLIPPAGE_BUFFER, MIN_RR_RATIO, STRAT_MIN_SCORE, STRAT_AGREEMENT_REQ
+from config import BASE_BALANCE, RISK_PER_TRADE, MIN_LEVERAGE, MAX_LEVERAGE, API_KEY, SECRET_KEY, EXCHANGE_TAKER_FEE, SLIPPAGE_BUFFER, MIN_RR_RATIO, STRAT_MIN_SCORE, STRAT_AGREEMENT_REQ
 from strategies import StrategyA, StrategyB, StrategyC
 
 # Configure Order Logger (Save orders to file)
@@ -122,8 +121,28 @@ class RiskManager:
             return {"action": "NO_TRADE", "reason": f"R:R ({tp1_distance/sl_distance if sl_distance else 0:.2f}) < {MIN_RR_RATIO} min"}
         
         pos_size_usdt = risk_amount / (sl_distance / current_price) if sl_distance > 0 else 0
-        leverage = min(pos_size_usdt / (BASE_BALANCE * 0.1), e5_param.get('leverage_max', MAX_LEVERAGE), 12)
-        leverage = max(leverage, 5)
+        
+        # --- Leverage Clamping ---
+        # User requested exact bounds: 10x minimum, 30x maximum
+        leverage = min(pos_size_usdt / (BASE_BALANCE * 0.1), e5_param.get('leverage_max', MAX_LEVERAGE), MAX_LEVERAGE)
+        leverage = max(leverage, MIN_LEVERAGE)
+        
+        # --- Liquidation Prevention Squeeze ---
+        # At 30x leverage, Binance margin is ~3.33%. 
+        # If sl_distance > 3%, the position will liquidate *before* it hits SL.
+        max_safe_sl_pct = (1.0 / leverage) * 0.8 # Clamp SL to max 80% of margin allowed before liquidation
+        max_safe_sl_dist = current_price * max_safe_sl_pct
+        
+        if sl_distance > max_safe_sl_dist:
+            # Squeeze SL down to the safe liquidation-proof limit
+            sl_scale_factor = max_safe_sl_dist / sl_distance
+            sl_distance = max_safe_sl_dist
+            # Squeeze TP in tandem to maintain original Profit/Loss ratio
+            tp1_distance = tp1_distance * sl_scale_factor 
+            
+            # Re-check TP against exchange fees after the squeeze
+            if tp1_distance < min_tp:
+                return {"action": "NO_TRADE", "reason": f"Squeezed 30x SL forced TP too small for fees."}
         
         return {
             "position_size_usdt": pos_size_usdt,

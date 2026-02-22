@@ -12,8 +12,9 @@ BINANCE_FUTURES_REST_URL = os.getenv("BINANCE_FUTURES_REST_URL", "")
 BINANCE_FUTURES_WS_URL = os.getenv("BINANCE_FUTURES_WS_URL", "")
 
 TRADING_PAIRS = os.getenv("TRADING_PAIRS", "BTCUSDT,ETHUSDT").split(",")
-BASE_BALANCE = float(os.getenv("BASE_BALANCE", "500"))
-MAX_LEVERAGE = int(os.getenv("MAX_LEVERAGE", "12"))
+BASE_BALANCE = float(os.getenv("BASE_BALANCE", "100"))
+MIN_LEVERAGE = int(os.getenv("MIN_LEVERAGE", "10"))
+MAX_LEVERAGE = int(os.getenv("MAX_LEVERAGE", "30"))
 RISK_PER_TRADE = float(os.getenv("RISK_PER_TRADE", "0.01"))
 
 EXCHANGE_TAKER_FEE = float(os.getenv("EXCHANGE_TAKER_FEE", "0.0005")) # Binance Futures 0.05%
