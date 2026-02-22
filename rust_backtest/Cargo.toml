@@ -1,0 +1,17 @@
+[package]
+name = "rust_backtest"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+nautilus-backtest = "0.53.0"
+nautilus-execution = "0.53.0"
+nautilus-model = "0.53.0"
+nautilus-trading = { version = "0.53.0", features = ["examples"] }
+ahash = "0.8"
+anyhow = "1.0"
+tokio = { version = "1", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }

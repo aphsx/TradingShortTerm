@@ -49,3 +49,10 @@ venv.bak/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+
+# Rust/Cargo
+/target
+Cargo.lock
+**/*.rs.bk
+debug/
+release/
