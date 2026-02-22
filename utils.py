@@ -69,12 +69,60 @@ def calculate_bollinger_bands(data, period=20, std_dev=2):
     std = np.std(data[-period:])
     return sma + std_dev * std, sma, sma - std_dev * std
 
-def calculate_imbalance(bids, asks):
-    bid_vol = sum(float(b[1]) for b in bids[:10])
-    ask_vol = sum(float(a[1]) for a in asks[:10])
+def calculate_imbalance(bids, asks, levels=10):
+    """
+    Calculate order book imbalance at specified depth levels.
+
+    Args:
+        bids: List of [price, quantity] for bids
+        asks: List of [price, quantity] for asks
+        levels: Number of depth levels to consider (default 10)
+
+    Returns:
+        float: Imbalance ratio (-1 to 1), positive = buy pressure
+    """
+    bid_vol = sum(float(b[1]) for b in bids[:levels])
+    ask_vol = sum(float(a[1]) for a in asks[:levels])
     if bid_vol + ask_vol == 0:
         return 0
     return (bid_vol - ask_vol) / (bid_vol + ask_vol)
+
+def calculate_depth_imbalance_multi(bids, asks):
+    """
+    Calculate imbalance at multiple depth levels for better liquidity detection.
+
+    Research shows multi-level analysis captures deeper market structure
+    better than single-level snapshots.
+
+    Args:
+        bids: List of [price, quantity] for bids
+        asks: List of [price, quantity] for asks
+
+    Returns:
+        dict: Imbalance at L5, L10, L20 and weighted average
+    """
+    if not bids or not asks:
+        return {
+            'imbalance_L5': 0.0,
+            'imbalance_L10': 0.0,
+            'imbalance_L20': 0.0,
+            'imbalance_weighted': 0.0
+        }
+
+    imb_L5 = calculate_imbalance(bids, asks, levels=5)
+    imb_L10 = calculate_imbalance(bids, asks, levels=10)
+    imb_L20 = calculate_imbalance(bids, asks, levels=20)
+
+    # Weighted average: L5 most important (closest to price), L20 least
+    # Weights: L5=50%, L10=30%, L20=20%
+    weighted = (imb_L5 * 0.5) + (imb_L10 * 0.3) + (imb_L20 * 0.2)
+
+    return {
+        'imbalance_L5': imb_L5,
+        'imbalance_L10': imb_L10,
+        'imbalance_L20': imb_L20,
+        'imbalance_weighted': weighted
+    }
 
 def calculate_adx(highs, lows, closes, period=14):
     if len(closes) < period * 2:

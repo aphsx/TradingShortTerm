@@ -1,4 +1,4 @@
-from utils import calculate_imbalance, calculate_rsi, calculate_atr, calculate_atr_array, calculate_bollinger_bands, calculate_adx, calculate_percentiles, calculate_vpin
+from utils import calculate_imbalance, calculate_rsi, calculate_atr, calculate_atr_array, calculate_bollinger_bands, calculate_adx, calculate_percentiles, calculate_vpin, calculate_depth_imbalance_multi
 from config import E1_IMBALANCE_THRESHOLD, E2_MOMENTUM_THRESHOLD, E4_FUNDING_RATE_THRESHOLD
 
 class Engine1OrderFlow:
@@ -11,12 +11,15 @@ class Engine1OrderFlow:
                 "strength": None,
                 "conviction": None,
                 "imbalance": None,
+                "depth_imbalance": None,
                 "cvd_slope": None,
                 "micro_price": None,
                 "vpin": 0.0
             }
 
-        imbalance = calculate_imbalance(bids, asks)
+        # Multi-level depth imbalance for better liquidity structure detection
+        depth_data = calculate_depth_imbalance_multi(bids, asks)
+        imbalance = depth_data['imbalance_weighted']  # Use weighted average as primary
 
         # Calculate VPIN for predictive signal (0.5-2s ahead)
         vpin = calculate_vpin(ticks, volume_bucket_size=50, num_buckets=5)
@@ -30,11 +33,19 @@ class Engine1OrderFlow:
         if vpin > 0.5:  # High informed trading activity
             conviction = min(1.0, conviction * 1.3)  # 30% boost
 
+        # Additional conviction boost if all depth levels align
+        if abs(depth_data['imbalance_L5']) > E1_IMBALANCE_THRESHOLD and \
+           abs(depth_data['imbalance_L10']) > E1_IMBALANCE_THRESHOLD and \
+           abs(depth_data['imbalance_L20']) > E1_IMBALANCE_THRESHOLD:
+            # All depths showing same direction = strong liquidity structure
+            conviction = min(1.0, conviction * 1.2)  # 20% boost
+
         return {
             "direction": direction,
             "strength": abs(imbalance),
             "conviction": conviction,
             "imbalance": imbalance,
+            "depth_imbalance": depth_data,  # Full depth structure for analysis
             "cvd_slope": 0,
             "micro_price": (float(bids[0][0])*float(asks[0][1]) + float(asks[0][0])*float(bids[0][1]))/(float(bids[0][1])+float(asks[0][1])) if bids and asks else 0,
             "vpin": vpin
