@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(static ratio\" for price prediction\n\\(arxiv.org/abs/2602.00776\\)\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(0.6?\"\n\n2. **Filter Optimization:**\n   - \"เรา)",
+      "Bash(reject เพราะ Low VPIN กี่ครั้ง?\"\n   - \"ถ้าเราลด VPIN threshold เราจะเข้าเพิ่มกี่ trade?\"\n\n3. **Engine Performance:**\n   - \"E1 มี accuracy เท่าไหร่?\"\n   - \"Engine ไหนทำงานดีที่สุดใน trending market?\"\n\n4. **Pattern Discovery:**\n   - \"การเทรดที่ชนะมักมี pattern อะไร?\"\n   - \"Losing trades มักถูก reject ด้วยเหตุผลอะไร?\"\n\nNext Steps:\n1. Run database_schema.sql on Supabase\n2. Bot will auto-populate data\n3. Build dashboard using the views\n4. Analyze and optimize thresholds\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+    ]
+  }
+}

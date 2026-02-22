@@ -1,17 +1,3 @@
-The user wants a detailed documentation (not code) for the VORTEX-7 trading bot project. They want a comprehensive blueprint document that covers everything needed to build this system. Let me create a thorough technical document in Thai/English covering all aspects of the system.
-
-Let me create a detailed markdown-style documentation covering:
-1. Project Overview
-2. System Architecture
-3. APIs & Infrastructure needed
-4. Each Engine in detail
-5. Trading Strategies
-6. Risk Management
-7. Data Layer
-8. Development Phases
-9. Mathematical formulas
-
-I'll present this as a proper documentation document, not as a React web app.
 # VORTEX-7 — เอกสารออกแบบระบบฉบับสมบูรณ์
 ## Binance Futures Short-Term Scalping Bot
 
