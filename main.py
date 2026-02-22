@@ -10,6 +10,25 @@ from logger_config import setup_logging, get_logger
 import datetime
 import time
 import traceback
+import re
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    """
+    Safely convert a value to float, handling numpy string representations
+    like 'np.float64(0.0883)' that can end up stored as strings in pos_data.
+    """
+    if value is None:
+        return default
+    s = str(value)
+    # Handle 'np.float64(0.0883)' or 'np.float32(...)' style strings
+    m = re.match(r'^np\.float\d+\((.+)\)$', s.strip())
+    if m:
+        s = m.group(1)
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return default
 
 # Initialize logging
 setup_logging(console_level="INFO")
@@ -356,11 +375,11 @@ class VortexBot:
 
                     current_price = (float(bids[0][0]) + float(asks[0][0])) / 2
 
-                    entry_price = float(pos_data.get('price', 0))
+                    entry_price = _safe_float(pos_data.get('price', 0))
                     side = pos_data.get('side', '')
-                    sl_price = float(pos_data.get('sl_price', 0))
-                    tp_price = float(pos_data.get('tp_price', 0))
-                    open_time = float(pos_data.get('open_time', time.time()))
+                    sl_price = _safe_float(pos_data.get('sl_price', 0))
+                    tp_price = _safe_float(pos_data.get('tp_price', 0))
+                    open_time = _safe_float(pos_data.get('open_time', time.time()))
 
                     if entry_price <= 0:
                         continue
