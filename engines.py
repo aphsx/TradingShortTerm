@@ -1,4 +1,4 @@
-from utils import calculate_imbalance, calculate_rsi, calculate_atr, calculate_atr_array, calculate_bollinger_bands, calculate_adx, calculate_percentiles, calculate_vpin, calculate_depth_imbalance_multi
+from utils import calculate_imbalance, calculate_rsi, calculate_atr, calculate_atr_array, calculate_bollinger_bands, calculate_adx, calculate_percentiles, calculate_vpin, calculate_depth_imbalance_multi, calculate_macd, calculate_keltner_channels
 from config import E1_IMBALANCE_THRESHOLD, E2_MOMENTUM_THRESHOLD, E4_FUNDING_RATE_THRESHOLD
 from logger_config import get_logger
 
@@ -345,7 +345,10 @@ class Engine3Technical:
                 "strength": None, 
                 "atr": None, 
                 "bb_zone": None, 
-                "rsi": None
+                "rsi": None,
+                "macd_histogram": None,
+                "squeeze": False,
+                "trend_strength": 0.0
             }
         
         closes = [float(k[4]) for k in klines]
@@ -354,22 +357,76 @@ class Engine3Technical:
         
         rsi = calculate_rsi(closes)
         atr = calculate_atr(highs, lows, closes)
-        upper, middle, lower = calculate_bollinger_bands(closes)
+        upper_bb, middle_bb, lower_bb = calculate_bollinger_bands(closes)
         
+        # MACD for trend momentum confirmation
+        macd_line, signal_line, histogram = calculate_macd(closes, fast=12, slow=26, signal=9)
+        
+        # Keltner Channels for squeeze detection
+        upper_kc, middle_kc, lower_kc = calculate_keltner_channels(highs, lows, closes)
+        
+        # === Squeeze Detection ===
+        # When BB contracts inside KC, volatility is compressed
+        # Breakout from squeeze = high-probability directional move
+        import numpy as np
+        squeeze = False
+        if not any(np.isnan(x) for x in [upper_bb, lower_bb, upper_kc, lower_kc] if x is not None):
+            squeeze = (upper_bb < upper_kc) and (lower_bb > lower_kc)
+        
+        # === Multi-indicator Direction ===
         direction = "NEUTRAL"
         bb_zone = "MIDDLE"
-        if closes[-1] > upper: bb_zone = "UPPER"
-        elif closes[-1] < lower: bb_zone = "LOWER"
+        trend_score = 0.0  # -1 (bearish) to +1 (bullish)
         
-        if rsi < 30: direction = "LONG"
-        elif rsi > 70: direction = "SHORT"
+        # Bollinger Band zone
+        if not np.isnan(upper_bb) and not np.isnan(lower_bb):
+            if closes[-1] > upper_bb: bb_zone = "UPPER"
+            elif closes[-1] < lower_bb: bb_zone = "LOWER"
+        
+        # RSI contribution
+        if rsi < 30:
+            trend_score += 0.4   # Oversold = bullish reversal signal
+        elif rsi < 40:
+            trend_score += 0.2
+        elif rsi > 70:
+            trend_score -= 0.4   # Overbought = bearish reversal signal
+        elif rsi > 60:
+            trend_score -= 0.2
+        
+        # MACD contribution (momentum confirmation)
+        if not np.isnan(histogram):
+            if histogram > 0:
+                trend_score += min(0.3, histogram / (atr if atr and atr > 0 else 1) * 10)
+            else:
+                trend_score -= min(0.3, abs(histogram) / (atr if atr and atr > 0 else 1) * 10)
+        
+        # Squeeze contribution (amplifies signal)
+        if squeeze:
+            # In squeeze, MACD direction predicts breakout direction
+            if not np.isnan(histogram):
+                if histogram > 0:
+                    trend_score += 0.2  # Bullish squeeze breakout
+                else:
+                    trend_score -= 0.2  # Bearish squeeze breakout
+        
+        # Final direction decision
+        if trend_score > 0.15:
+            direction = "LONG"
+        elif trend_score < -0.15:
+            direction = "SHORT"
+        
+        # Strength is absolute trend_score normalized
+        strength = min(1.0, abs(trend_score))
         
         return {
             "direction": direction,
-            "strength": abs(rsi - 50) / 50,
+            "strength": strength,
             "rsi": rsi,
             "bb_zone": bb_zone,
-            "atr": atr
+            "atr": atr,
+            "macd_histogram": histogram if not np.isnan(histogram) else 0.0,
+            "squeeze": squeeze,
+            "trend_strength": trend_score
         }
 
 class Engine4Sentiment:
