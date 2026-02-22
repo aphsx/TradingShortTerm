@@ -21,6 +21,7 @@ mod strategy;
 mod backtest;
 mod metrics;
 mod live;
+mod time_sync;
 
 use anyhow::Result;
 use tokio::time::{sleep, Duration};
@@ -31,7 +32,7 @@ use config::AppConfig;
 use data::BinanceDataClient;
 use live::LiveOrderClient;
 use risk::position_size;
-use strategy::{ExitReason, StrategyEngine};
+use strategy::StrategyEngine;
 
 /// Interval cadence to sleep between polls (in seconds).
 /// For 1m bars: poll every 60s. We poll slightly earlier to fetch fresh bar.
@@ -71,11 +72,15 @@ async fn main() -> Result<()> {
     let rest_url = cfg.rest_url.clone();
 
     let data_client = BinanceDataClient::new(&rest_url);
-    let order_client = LiveOrderClient::new(
+    let mut order_client = LiveOrderClient::new(
         &cfg.api_key,
         &cfg.api_secret,
         &rest_url,
     );
+
+    // ── Sync time with Binance server ────────────────────────────────────────
+    info!("Syncing time with Binance server...");
+    order_client.sync_time(cfg.use_testnet).await?;
 
     // ── Warm up: fetch recent bars to fill model buffers ─────────────────
     let warmup_bars = (cfg.ou_window + 50).max(200) as u64;

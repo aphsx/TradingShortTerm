@@ -21,6 +21,7 @@ use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use sha2::Sha256;
 use tracing::{error, info, warn};
+use crate::time_sync;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -56,6 +57,7 @@ pub struct LiveOrderClient {
     api_key:    String,
     api_secret: String,
     base_url:   String,
+    time_sync:  time_sync::TimeSync,
 }
 
 impl LiveOrderClient {
@@ -69,6 +71,7 @@ impl LiveOrderClient {
             api_key:    api_key.to_owned(),
             api_secret: api_secret.to_owned(),
             base_url:   base_url.to_owned(),
+            time_sync:  time_sync::TimeSync::new(),
         }
     }
 
@@ -80,9 +83,14 @@ impl LiveOrderClient {
         hex::encode(mac.finalize().into_bytes())
     }
 
-    /// Current Unix timestamp in milliseconds.
-    fn timestamp_ms() -> i64 {
-        Utc::now().timestamp_millis()
+    /// Sync time with Binance server
+    pub async fn sync_time(&mut self, testnet: bool) -> Result<()> {
+        self.time_sync.sync(testnet).await
+    }
+
+    /// Current Unix timestamp in milliseconds (server-synced).
+    fn timestamp_ms(&self) -> i64 {
+        self.time_sync.timestamp_ms()
     }
 
     /// Place a MARKET order on Binance Futures.
@@ -102,7 +110,7 @@ impl LiveOrderClient {
         // Format quantity to 3 decimal places (BTC precision)
         let qty_str = format!("{:.3}", quantity);
 
-        let ts = Self::timestamp_ms();
+        let ts = self.timestamp_ms();
         // Build query string (without signature)
         let params = format!(
             "symbol={}&side={}&type=MARKET&quantity={}&timestamp={}",
@@ -153,7 +161,7 @@ impl LiveOrderClient {
         symbol:   &str,
         leverage: u32,
     ) -> Result<()> {
-        let ts = Self::timestamp_ms();
+        let ts = self.timestamp_ms();
         let params = format!(
             "symbol={}&leverage={}&timestamp={}",
             symbol, leverage, ts
@@ -186,7 +194,7 @@ impl LiveOrderClient {
         &self,
         symbol: &str,
     ) -> Result<Vec<serde_json::Value>> {
-        let ts = Self::timestamp_ms();
+        let ts = self.timestamp_ms();
         let params = format!("symbol={}&timestamp={}", symbol, ts);
         let signature = self.sign(&params);
 

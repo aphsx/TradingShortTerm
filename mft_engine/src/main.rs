@@ -13,12 +13,13 @@ mod risk;
 mod strategy;
 mod backtest;
 mod metrics;
+mod time_sync;
 
 use anyhow::Result;
 use tracing::info;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::EnvFilter;
 
-use backtest::{BacktestConfig, run_backtest, print_trade_log};
+use backtest::{BacktestConfig, run_backtest};
 use config::AppConfig;
 use data::BinanceDataClient;
 

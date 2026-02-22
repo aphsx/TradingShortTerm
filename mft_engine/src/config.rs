@@ -2,7 +2,7 @@
 ///
 /// All parameters consumed by the MFT engine are defined here.
 /// Loading happens once at startup; every module borrows &AppConfig.
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::env;
 
 /// Fee model constants (Binance USDT-M Futures defaults)

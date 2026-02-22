@@ -4,7 +4,7 @@
 /// Supports both testnet (https://testnet.binancefuture.com) and mainnet.
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+// chrono removed as unused
 use reqwest::Client;
 use serde::Deserialize;
 use tracing::{debug, info};
