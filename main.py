@@ -183,59 +183,6 @@ class VortexBot:
                     # === SUPABASE LOGGING (STRICTLY ON TRADE ONLY) ===
                     # บันทึกข้อมูลลง Database เฉพาะเมื่อมีการตัดสินใจเทรด (LONG/SHORT) เท่านั้น
                     # เพื่อป้องกันการเซฟข้อมูลถี่เกินไป (เดิมเซฟทุก 150ms)
-                    if dec["action"] != "NO_TRADE":
-                        # 1. Save Signal Snapshot (บันทึกข้อมูล indicator ที่ทำให้ตัดสินใจเทรด)
-                        asyncio.create_task(self.storage.save_signal_snapshot({
-                            "symbol": raw_sym,
-                            "action": dec["action"],
-                            "reason": dec.get("reason", ""),
-                            "final_score": dec.get("final_score", 0),
-                            "confidence": dec.get("confidence", 0),
-                            "strategy": dec.get("strategy", ""),
-                            "current_price": price,
-                            "atr": s3.get("atr", 0),
-
-                            # Engine Data
-                            "e1_direction": s1.get("direction"),
-                            "e1_strength": s1.get("strength"),
-                            "e1_conviction": s1.get("conviction"),
-                            "e1_imbalance": s1.get("imbalance"),
-                            "e1_imbalance_l5": s1.get("depth_imbalance", {}).get("imbalance_L5"),
-                            "e1_imbalance_l10": s1.get("depth_imbalance", {}).get("imbalance_L10"),
-                            "e1_imbalance_l20": s1.get("depth_imbalance", {}).get("imbalance_L20"),
-                            "e1_ofi_velocity": s1.get("ofi_velocity", 0),
-                            "e1_vpin": s1.get("vpin", 0),
-                            "e1_micro_price": s1.get("micro_price"),
-
-                            "e2_direction": s2.get("direction"),
-                            "e2_strength": s2.get("strength"),
-                            "e2_aggressor_ratio": s2.get("aggressor_ratio"),
-                            "e2_aggressor_1s": s2.get("aggressor_1s"),
-                            "e2_aggressor_5s": s2.get("aggressor_5s"),
-                            "e2_aggressor_15s": s2.get("aggressor_15s"),
-                            "e2_alignment": s2.get("alignment", 0),
-                            "e2_velocity_ratio": s2.get("velocity_ratio"),
-
-                            "e3_direction": s3.get("direction"),
-                            "e3_strength": s3.get("strength"),
-                            "e3_rsi": s3.get("rsi"),
-                            "e3_bb_zone": s3.get("bb_zone"),
-
-                            "e4_direction": s4.get("direction"),
-                            "e4_strength": s4.get("strength"),
-                            "e4_ls_ratio": sentiment_data.get("ls_ratio", 0),
-                            "e4_funding_rate": sentiment_data.get("funding_rate", 0),
-                            "e4_long_pct": sentiment_data.get("long_account_pct", 0),
-                            "e4_short_pct": sentiment_data.get("short_account_pct", 0),
-
-                            "e5_regime": s5.get("regime"),
-                            "e5_vol_phase": s5.get("vol_phase"),
-                            "weight_e1": s5.get("weight_overrides", {}).get("e1", 0.35),
-                            "weight_e2": s5.get("weight_overrides", {}).get("e2", 0.25),
-                            "weight_e3": s5.get("weight_overrides", {}).get("e3", 0.20),
-                            "weight_e4": s5.get("weight_overrides", {}).get("e4", 0.12),
-                        }))
-
                     if dec["action"] == "NO_TRADE":
                         regime_info = f"{s5.get('regime', 'UNK')}|{s5.get('vol_phase', 'UNK')}"
                         sent_info = f"{s4.get('direction', 'UNK')}"
@@ -247,36 +194,59 @@ class VortexBot:
                         if price > 0:
                             risk_params = self.risk.calculate(dec, price, s3.get('atr', 0), s5.get('param_overrides', {}))
                             
-                            # Catch Fee/Spread Rejections from RiskManager
+                            # Skip if RiskManager rejects (Fee/Spread/RR issues)
                             if risk_params is not None and risk_params.get("action") == "NO_TRADE":
-                                print(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | SNT: {s4.get('direction', 'UNK')} | SKIP: {risk_params.get('reason')}")
+                                print(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | SKIP: {risk_params.get('reason')}")
                                 continue
                                 
+                            # --- ACTUAL TRADE ATTEMPT ---
+                            # จุดนี้คือจุดที่ Bot "ตัดสินใจยิงจริง" จะบันทึกข้อมูลลง Database เฉพาะที่จุดนี้
                             order = await self.executor.execute_trade(raw_sym, dec, risk_params, price)
+                            
                             if order:
+                                # 1. Save Signal Snapshot (เหตุผลที่ยิงไม้่นี้)
+                                asyncio.create_task(self.storage.save_signal_snapshot({
+                                    "symbol": raw_sym,
+                                    "action": dec["action"],
+                                    "reason": dec.get("reason", ""),
+                                    "final_score": dec.get("final_score", 0),
+                                    "confidence": dec.get("confidence", 0),
+                                    "strategy": dec.get("strategy", ""),
+                                    "current_price": price,
+                                    "atr": s3.get("atr", 0),
+                                    "e1_direction": s1.get("direction"),
+                                    "e1_strength": s1.get("strength"),
+                                    "e1_vpin": s1.get("vpin", 0),
+                                    "e2_direction": s2.get("direction"),
+                                    "e2_strength": s2.get("strength"),
+                                    "e2_alignment": s2.get("alignment", 0),
+                                    "e3_direction": s3.get("direction"),
+                                    "e3_rsi": s3.get("rsi"),
+                                    "e4_direction": s4.get("direction"),
+                                    "e5_regime": s5.get("regime")
+                                }))
+
+                                # 2. Update Local Redis State (If success)
                                 if order.get("status", "SUCCESS") == "SUCCESS":
                                     self.storage.set_position(raw_sym, order)
                                 
-                                # === SAVE TRADE (Non-blocking) ===
+                                # 3. Save Trade Results (Success หรือ Error ก็จะเซฟลงตาราง trades)
                                 asyncio.create_task(self.storage.save_trade({
                                     "symbol": order.get("symbol", raw_sym),
                                     "side": order.get("side", dec["action"]),
                                     "strategy": order.get("strategy", dec["strategy"]),
-                                    
                                     "order_id": order.get("order_id"),
                                     "client_order_id": order.get("client_order_id"),
                                     "execution_type": order.get("execution_type"),
                                     "api_latency_ms": order.get("api_latency_ms"),
-                                    "status": order.get("status"),
+                                    "status": order.get("status"), # SUCCESS หรือ API_ERROR
                                     "error_type": order.get("error_type"),
                                     "error_msg": order.get("error_msg"),
-                                    
                                     "entry_price": order.get("price", 0),
                                     "size_usdt": order.get("quantity", 0) * order.get("price", 0),
                                     "leverage": risk_params.get("leverage", 1),
                                     "sl_price": order.get("sl_price", 0),
                                     "tp1_price": order.get("tp_price", 0),
-                                    
                                     "confidence": dec.get("confidence", 0),
                                     "final_score": dec.get("final_score", 0)
                                 }))
