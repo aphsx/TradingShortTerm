@@ -537,12 +537,23 @@ class VortexBot:
                                 dec, price, s3.get('atr', 0), s5.get('param_overrides', {})
                             )
 
-                            # Skip if RiskManager rejects (Fee/Spread/RR issues)
+                            # Skip if RiskManager rejects (Fee/Spread/RR/Drawdown/Cooldown)
                             if risk_params is not None and risk_params.get("action") == "NO_TRADE":
                                 logger.info(
                                     f"[{current_time}] {raw_sym} | P: {price:.2f} | "
-                                    f"RGM: {regime_info} | SKIP: {risk_params.get('reason')}"
+                                    f"RGM: {regime_info} | RISK_REJECT: {risk_params.get('reason')}"
                                 )
+                                # Log rejection to Supabase for analysis
+                                asyncio.create_task(self.storage.save_rejected_signal({
+                                    "symbol": raw_sym,
+                                    "action": dec["action"],
+                                    "strategy": dec.get("strategy", ""),
+                                    "confidence": dec.get("confidence", 0),
+                                    "rejection_reason": risk_params.get("reason", ""),
+                                    "rejection_source": "RiskManager",
+                                    "current_price": price,
+                                    "daily_pnl": risk_params.get("daily_pnl", 0),
+                                }))
                                 continue
 
                             # --- POSITION GUARD: Prevent duplicate trades ---
