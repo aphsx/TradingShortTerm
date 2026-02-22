@@ -185,11 +185,35 @@ class Executor:
     async def execute_trade(self, symbol, decision, risk_params, current_price):
         if decision['action'] == "NO_TRADE":
             return None
-            
+
         side = decision['action']
         pos_size = risk_params['position_size_usdt'] / current_price
-        
-        entry_price = current_price * 1.0001 if side == "SHORT" else current_price * 0.9999
+
+        # === PREDICTIVE LIMIT ORDER PRICING ===
+        # For high-latency environments, use OFI velocity to predict where
+        # price will be in 0.5-1s, then place limit order there.
+        # This gives us maker fee (0.02%) instead of taker (0.05%) = 60% savings
+
+        ofi_velocity = decision.get('ofi_velocity', 0.0)
+        atr = decision.get('atr', current_price * 0.002)
+
+        # Predict price movement based on OFI velocity
+        # High velocity = price will move in that direction
+        predicted_move = ofi_velocity * atr * 0.25  # Conservative 25% of ATR
+
+        if side == "LONG":
+            # Place buy limit slightly below predicted price
+            # If momentum continues, we'll get filled at favorable price
+            entry_price = current_price + predicted_move - (atr * 0.1)
+        else:  # SHORT
+            # Place sell limit slightly above predicted price
+            entry_price = current_price - predicted_move + (atr * 0.1)
+
+        # Ensure entry price is realistic (within 0.3% of current)
+        max_deviation = current_price * 0.003
+        if abs(entry_price - current_price) > max_deviation:
+            entry_price = current_price + (max_deviation if side == "SHORT" else -max_deviation)
+
         sl_price = entry_price + risk_params['sl_distance'] if side == "SHORT" else entry_price - risk_params['sl_distance']
         tp_price = entry_price - risk_params['tp1_distance'] if side == "SHORT" else entry_price + risk_params['tp1_distance']
         
@@ -225,8 +249,16 @@ class Executor:
             
             ccxt_side = 'buy' if side == 'LONG' else 'sell'
             ord_type = 'limit'
-            print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] CCXT Sending {side} ({ccxt_side}) {ord_type} order ({order_details['quantity']} @ {order_details['price']})...")
-            
+
+            # === POST-ONLY LIMIT ORDER (Maker Fee Optimization) ===
+            # timeInForce='GTX' (Good-Til-Crossing) = Binance Post-Only mode
+            # Benefits:
+            #   - Maker fee 0.02% vs Taker 0.05% = 60% savings
+            #   - No slippage (we set exact price)
+            #   - Better for high-latency (wait for price to come to us)
+            # Trade-off: Order may not fill if price doesn't reach our level
+            print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Placing POST-ONLY {side} limit @ {order_details['price']:.2f} (Predicted from OFI velocity)")
+
             res = await self.exchange.create_order(
                 symbol=ccxt_symbol,
                 type=ord_type,
