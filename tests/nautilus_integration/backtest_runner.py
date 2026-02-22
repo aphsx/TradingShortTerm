@@ -93,7 +93,8 @@ def run_vortex_backtest(csv_path=None):
              data_files = glob.glob(data_pattern)
              
         if data_files:
-            csv_path = max(data_files)
+            # Prefer 180d data if available, otherwise take the latest (max)
+            csv_path = next((f for f in data_files if "180d.csv" in f), max(data_files))
             print(f"Loading {raw_name} data from {csv_path}...")
             try:
                  df = pd.read_csv(csv_path)

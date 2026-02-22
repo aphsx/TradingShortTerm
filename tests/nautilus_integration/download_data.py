@@ -61,4 +61,4 @@ if __name__ == "__main__":
     for pair in TRADING_PAIRS:
         # pair is BTCUSDT, needs to be BTC/USDT
         symbol = f"{pair[:-4]}/{pair[-4:]}"
-        download_historical_data(symbol=symbol, timeframe='1m', days=30)
+        download_historical_data(symbol=symbol, timeframe='1m', days=180)
