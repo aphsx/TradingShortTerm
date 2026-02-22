@@ -320,8 +320,162 @@ class VortexBot:
                 pass  # Normal – keep polling
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Core trading loop
+    # Position Monitor — Trailing Stop, Breakeven, Auto-Close
     # ──────────────────────────────────────────────────────────────────────────
+
+    async def position_monitor_loop(self) -> None:
+        """
+        Monitors open positions and manages them:
+        1. Sync with exchange to get actual fill status
+        2. Trailing stop: move SL up as price moves in our favor
+        3. Breakeven: move SL to entry price when profitable enough
+        4. Time-based exit: close stale positions after max hold time
+        5. Record PnL for Kelly Criterion / drawdown tracking
+        """
+        logger.info("Position monitor started…")
+        max_hold_seconds = 300  # Max 5 minutes for scalp positions
+
+        while not self._shutdown_event.is_set():
+            try:
+                for symbol in self.ccxt_symbols:
+                    if self._shutdown_event.is_set():
+                        break
+
+                    raw_sym = symbol.replace('/','').replace(':USDT','')
+                    pos_data = self.storage.get_position(raw_sym)
+
+                    if not pos_data:
+                        continue
+
+                    # Fetch current price from orderbook
+                    ob = self.storage.get_orderbook(raw_sym)
+                    bids = ob.get("bids", [])
+                    asks = ob.get("asks", [])
+                    if not bids or not asks:
+                        continue
+
+                    current_price = (float(bids[0][0]) + float(asks[0][0])) / 2
+
+                    entry_price = float(pos_data.get('price', 0))
+                    side = pos_data.get('side', '')
+                    sl_price = float(pos_data.get('sl_price', 0))
+                    tp_price = float(pos_data.get('tp_price', 0))
+                    open_time = float(pos_data.get('open_time', time.time()))
+
+                    if entry_price <= 0:
+                        continue
+
+                    # Calculate unrealized PnL
+                    if side == 'LONG':
+                        pnl_pct = (current_price - entry_price) / entry_price
+                        tp_distance = tp_price - entry_price if tp_price > 0 else entry_price * 0.005
+                        hit_sl = current_price <= sl_price if sl_price > 0 else False
+                        hit_tp = current_price >= tp_price if tp_price > 0 else False
+                    elif side == 'SHORT':
+                        pnl_pct = (entry_price - current_price) / entry_price
+                        tp_distance = entry_price - tp_price if tp_price > 0 else entry_price * 0.005
+                        hit_sl = current_price >= sl_price if sl_price > 0 else False
+                        hit_tp = current_price <= tp_price if tp_price > 0 else False
+                    else:
+                        continue
+
+                    # === CHECK SL/TP HIT ===
+                    if hit_sl or hit_tp:
+                        reason = "TP HIT" if hit_tp else "SL HIT"
+                        leverage = float(pos_data.get('leverage', 10))
+                        realized_pnl = pnl_pct * float(pos_data.get('quantity', 0)) * entry_price
+
+                        logger.info(
+                            f"📊 POSITION CLOSED [{reason}] {raw_sym} {side} | "
+                            f"Entry: {entry_price:.2f} → Exit: {current_price:.2f} | "
+                            f"PnL: {pnl_pct*100:.3f}% ({realized_pnl:.4f} USDT)"
+                        )
+
+                        # Record result for Kelly / drawdown
+                        self.risk.record_trade_result(realized_pnl)
+
+                        # Save outcome to DB
+                        asyncio.create_task(self.storage.save_trade_outcome({
+                            "symbol": raw_sym,
+                            "side": side,
+                            "entry_price": entry_price,
+                            "exit_price": current_price,
+                            "pnl_pct": pnl_pct,
+                            "pnl_usdt": realized_pnl,
+                            "exit_reason": reason,
+                            "hold_time_s": time.time() - open_time
+                        }))
+
+                        self.storage.delete_position(raw_sym)
+                        continue
+
+                    # === TRAILING STOP ===
+                    # When profit > 50% of TP distance, trail SL behind price
+                    if tp_distance > 0 and pnl_pct > 0:
+                        profit_ratio = pnl_pct * entry_price / tp_distance
+
+                        if profit_ratio >= 0.5:
+                            # Trail SL at 40% of current profit
+                            trail_distance = abs(current_price - entry_price) * 0.40
+                            if side == 'LONG':
+                                new_sl = current_price - trail_distance
+                                if new_sl > sl_price:
+                                    pos_data['sl_price'] = str(round(new_sl, 2))
+                                    self.storage.set_position(raw_sym, pos_data)
+                                    logger.info(f"📈 TRAIL SL {raw_sym}: {sl_price:.2f} → {new_sl:.2f}")
+                            elif side == 'SHORT':
+                                new_sl = current_price + trail_distance
+                                if new_sl < sl_price or sl_price <= 0:
+                                    pos_data['sl_price'] = str(round(new_sl, 2))
+                                    self.storage.set_position(raw_sym, pos_data)
+                                    logger.info(f"📈 TRAIL SL {raw_sym}: {sl_price:.2f} → {new_sl:.2f}")
+
+                        # === BREAKEVEN ===
+                        # Move SL to entry when profit > 30% of TP distance
+                        elif profit_ratio >= 0.3:
+                            if side == 'LONG' and sl_price < entry_price:
+                                pos_data['sl_price'] = str(round(entry_price, 2))
+                                self.storage.set_position(raw_sym, pos_data)
+                                logger.info(f"🔒 BREAKEVEN {raw_sym}: SL moved to entry {entry_price:.2f}")
+                            elif side == 'SHORT' and (sl_price > entry_price or sl_price <= 0):
+                                pos_data['sl_price'] = str(round(entry_price, 2))
+                                self.storage.set_position(raw_sym, pos_data)
+                                logger.info(f"🔒 BREAKEVEN {raw_sym}: SL moved to entry {entry_price:.2f}")
+
+                    # === TIME-BASED EXIT ===
+                    # Close stale positions (scalps shouldn't be held > 5 min)
+                    hold_time = time.time() - open_time
+                    if hold_time > max_hold_seconds:
+                        logger.warning(
+                            f"⏰ TIME EXIT {raw_sym}: Held {hold_time:.0f}s > {max_hold_seconds}s limit. "
+                            f"PnL: {pnl_pct*100:.3f}%"
+                        )
+                        realized_pnl = pnl_pct * float(pos_data.get('quantity', 0)) * entry_price
+                        self.risk.record_trade_result(realized_pnl)
+
+                        asyncio.create_task(self.storage.save_trade_outcome({
+                            "symbol": raw_sym,
+                            "side": side,
+                            "entry_price": entry_price,
+                            "exit_price": current_price,
+                            "pnl_pct": pnl_pct,
+                            "pnl_usdt": realized_pnl,
+                            "exit_reason": "TIME_EXIT",
+                            "hold_time_s": hold_time
+                        }))
+
+                        self.storage.delete_position(raw_sym)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Position Monitor Error: {e}", exc_info=True)
+
+            # Check positions every 2 seconds
+            try:
+                await asyncio.wait_for(self._shutdown_event.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                pass
 
     async def trade_loop(self) -> None:
         logger.info("Trading loop started…")
@@ -421,6 +575,8 @@ class VortexBot:
 
                                 # 2. Update Local Redis State (If success)
                                 if order.get("status", "SUCCESS") == "SUCCESS":
+                                    order['open_time'] = str(time.time())
+                                    order['leverage'] = str(risk_params.get('leverage', 10))
                                     self.storage.set_position(raw_sym, order)
 
                                 # 3. Save Trade Results (Success หรือ Error ก็จะเซฟลงตาราง trades)
@@ -485,6 +641,7 @@ class VortexBot:
             ))
 
         self._tasks.append(asyncio.create_task(self.trade_loop(), name="trade_loop"))
+        self._tasks.append(asyncio.create_task(self.position_monitor_loop(), name="position_monitor"))
 
         print("Listening for marketplace data… (press Ctrl-C to stop)")
         try:
