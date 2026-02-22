@@ -479,8 +479,16 @@ class VortexBot:
 
     async def trade_loop(self) -> None:
         logger.info("Trading loop started…")
+        last_reset_day = -1
         while not self._shutdown_event.is_set():
             try:
+                # === Daily PnL Reset (UTC midnight) ===
+                current_day = datetime.datetime.utcnow().day
+                if current_day != last_reset_day:
+                    self.risk.reset_daily()
+                    last_reset_day = current_day
+                    logger.info(f"📅 Daily PnL reset. New trading day (UTC day {current_day})")
+
                 for symbol in self.ccxt_symbols:
                     if self._shutdown_event.is_set():
                         break

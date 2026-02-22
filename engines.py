@@ -493,6 +493,7 @@ class Engine5Regime:
                 "regime": None,
                 "vol_phase": None,
                 "spread_ok": False,
+                "adx": 0,
                 "weight_overrides": {"e1": 0.35, "e2": 0.25, "e3": 0.20, "e4": 0.12},
                 "param_overrides": {"tp_multiplier": 1.0, "sl_multiplier": 1.0, "leverage_max": 12}
             }
@@ -507,15 +508,13 @@ class Engine5Regime:
         atr_array = calculate_atr_array(highs, lows, closes, 14)
         
         if not atr_array or len(atr_array) < 50:
-            # Fallback to static if not enough history
             atr_14 = calculate_atr(highs, lows, closes, 14)
             atr_pct = (atr_14 / current_price) if current_price else 0
             vol_phase = "NORMAL_VOL"
-            if atr_pct < 0.0015: vol_phase = "LOW_VOL" # Less than 0.15% move per 15m candle
-            elif atr_pct > 0.008: vol_phase = "EXTREME_VOL" # > 0.8% move per 15m candle
-            elif atr_pct > 0.005: vol_phase = "HIGH_VOL" # > 0.5% move per 15m candle
+            if atr_pct < 0.0015: vol_phase = "LOW_VOL"
+            elif atr_pct > 0.008: vol_phase = "EXTREME_VOL"
+            elif atr_pct > 0.005: vol_phase = "HIGH_VOL"
         else:
-            # Calculate historical ATR%
             atr_pct_history = []
             offset = len(closes) - len(atr_array)
             for i in range(len(atr_array)):
@@ -529,50 +528,75 @@ class Engine5Regime:
             atr_pct = atr_pct_history[-1] if atr_pct_history else 0
             
             vol_phase = "NORMAL_VOL"
-            # Prevent zero-division/empty flatlines
             if p90 > 0:
                 if atr_pct < p25: vol_phase = "LOW_VOL"
                 elif atr_pct > p90: vol_phase = "EXTREME_VOL"
                 elif atr_pct > p75: vol_phase = "HIGH_VOL"
         
-        # 2. Trend Regime (ADX)
+        # 2. Trend Regime (ADX — now properly calculated with Wilder's smoothing)
         adx_14 = calculate_adx(highs, lows, closes, 14)
+        import numpy as np
+        if np.isnan(adx_14):
+            adx_14 = 0
         
+        # Granular regime detection
         regime = "RANGING"
-        if adx_14 < 20: regime = "CHOPPY"
-        elif adx_14 > 25: regime = "TRENDING"
+        if adx_14 < 15: regime = "CHOPPY"
+        elif adx_14 < 25: regime = "RANGING"
+        elif adx_14 < 40: regime = "TRENDING"
+        else: regime = "STRONG_TREND"
         
         # 3. Tradeability & Spread Proxy
-        # If High/Low diff of current candle is 0 (stale data), spread might be bad
         spread_proxy_pct = (highs[-1] - lows[-1]) / current_price if current_price else 0
-        spread_ok = spread_proxy_pct < 0.002 # Assume spread is ok if 3m range isn't inexplicably vast
+        spread_ok = spread_proxy_pct < 0.002
         
-        # Removed CHOPPY from the hardware trade-block for short term scalping
         tradeable = True
         if vol_phase == "EXTREME_VOL":
             tradeable = False
             
-        # 4. Dynamic Weight Setup
+        # 4. Dynamic Weight & Parameter Matrix
+        # Each regime gets optimized weights and params
         weights = {"e1": 0.35, "e2": 0.25, "e3": 0.20, "e4": 0.12}
-        params = {"tp_multiplier": 0.8, "sl_multiplier": 1.0, "leverage_max": 20} # Aggressive short-term scalping params
+        params = {"tp_multiplier": 0.8, "sl_multiplier": 1.0, "leverage_max": 20}
         
-        if regime == "TRENDING":
-            weights = {"e1": 0.40, "e2": 0.30, "e3": 0.10, "e4": 0.10} # Favor momentum
-            params["tp_multiplier"] = 1.0 # Let winners run a bit more
+        if regime == "STRONG_TREND":
+            weights = {"e1": 0.45, "e2": 0.30, "e3": 0.05, "e4": 0.10}
+            params["tp_multiplier"] = 1.5   # Let winners run
+            params["sl_multiplier"] = 0.8   # Tighter SL (trend protects)
+            params["leverage_max"] = 25
             
-        elif regime == "RANGING" or regime == "CHOPPY":
-            weights = {"e1": 0.15, "e2": 0.25, "e3": 0.45, "e4": 0.15} # Favor oscillators heavily for mean reversion
-            params["tp_multiplier"] = 0.5 # Take very quick profits
+        elif regime == "TRENDING":
+            weights = {"e1": 0.40, "e2": 0.30, "e3": 0.10, "e4": 0.10}
+            params["tp_multiplier"] = 1.0
+            params["leverage_max"] = 20
             
+        elif regime == "RANGING":
+            weights = {"e1": 0.15, "e2": 0.20, "e3": 0.45, "e4": 0.15}
+            params["tp_multiplier"] = 0.6
+            params["leverage_max"] = 15
+            
+        elif regime == "CHOPPY":
+            weights = {"e1": 0.10, "e2": 0.20, "e3": 0.50, "e4": 0.15}
+            params["tp_multiplier"] = 0.4   # Very quick profits
+            params["sl_multiplier"] = 0.7   # Tight SL in chop
+            params["leverage_max"] = 12
+        
+        # Volatility-specific overrides
         if vol_phase == "HIGH_VOL":
-            params["sl_multiplier"] = 1.5 # Widen SL to avoid wicks
-            params["leverage_max"] = 5 # Reduce risk
+            params["sl_multiplier"] = max(params["sl_multiplier"], 1.5)
+            params["leverage_max"] = min(params["leverage_max"], 10)
+            
+        elif vol_phase == "LOW_VOL":
+            # Low volatility = safe to size up
+            params["leverage_max"] = min(30, params["leverage_max"] + 5)
+            params["sl_multiplier"] = max(0.6, params["sl_multiplier"] - 0.2)
             
         return {
             "tradeable": tradeable,
             "regime": regime,
             "vol_phase": vol_phase,
             "spread_ok": spread_ok,
+            "adx": adx_14,
             "weight_overrides": weights,
             "param_overrides": params
         }
