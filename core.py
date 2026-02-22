@@ -42,8 +42,8 @@ class DecisionEngine:
         if not e5_filter.get('tradeable', True) or not e5_filter.get('spread_ok', True):
             return {"action": "NO_TRADE", "final_score": final_score, "reason": "E5 Filter: Not tradeable or spread too high"}
             
-        if abs(final_score) < 0.55:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Final score {abs(final_score):.2f} < 0.55"}
+        if abs(final_score) < 0.45:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Final score {abs(final_score):.2f} < 0.45"}
             
         action = "LONG" if final_score > 0 else "SHORT"
         action_val = 1 if action == "LONG" else -1

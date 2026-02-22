@@ -106,7 +106,7 @@ class VortexBot:
                         reason = "Wait"
                         if not ticks: reason = "No Ticks"
                         elif not ob.get("bids"): reason = "No Orderbook"
-                        elif abs(dec.get("final_score", 0)) < 0.55: reason = f"Low Score ({dec.get('final_score',0):.2f})"
+                        elif abs(dec.get("final_score", 0)) < 0.45: reason = f"Low Score ({dec.get('final_score',0):.2f})"
                         
                         print(f"[{current_time}] {raw_sym} | P: {price:.2f} | Action: SKIP | R: {reason}")
                     else:
