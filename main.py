@@ -39,8 +39,35 @@ class VortexBot:
         # For ccxt.binanceusdm, Linear Futures use BASE/QUOTE:SETTLE standard (BTC/USDT:USDT)
         self.ccxt_symbols = [f"{s.replace('USDT', '')}/USDT:USDT" for s in TRADING_PAIRS]
 
+        # Websocket reconnection tracking
+        self.ws_reconnect_delays = {}  # Track delays per symbol/type
+        self.ws_max_reconnect_delay = 60  # Max 60 seconds between retries
+
+    async def _exponential_backoff_sleep(self, key: str):
+        """Exponential backoff for websocket reconnections with circuit breaker"""
+        if key not in self.ws_reconnect_delays:
+            self.ws_reconnect_delays[key] = 1  # Start with 1 second
+        else:
+            self.ws_reconnect_delays[key] = min(
+                self.ws_reconnect_delays[key] * 2,
+                self.ws_max_reconnect_delay
+            )
+
+        delay = self.ws_reconnect_delays[key]
+        print(f"⚠ WebSocket reconnecting in {delay}s (key: {key})")
+        await asyncio.sleep(delay)
+
+    def _reset_backoff(self, key: str):
+        """Reset backoff delay on successful connection"""
+        if key in self.ws_reconnect_delays:
+            del self.ws_reconnect_delays[key]
+
     async def watch_ob_for_symbol(self, symbol):
         raw_sym = symbol.replace('/', '').replace(':USDT', '')
+        backoff_key = f"ob_{symbol}"
+        consecutive_errors = 0
+        max_consecutive_errors = 10  # Circuit breaker threshold
+
         while True:
             try:
                 ob = await self.exchange.watch_order_book(symbol)
@@ -48,14 +75,29 @@ class VortexBot:
                 bids = [[str(b[0]), str(b[1])] for b in ob.get('bids', [])[:20]]
                 asks = [[str(a[0]), str(a[1])] for a in ob.get('asks', [])[:20]]
                 self.storage.set_orderbook(raw_sym, bids, asks)
+
+                # Reset on success
+                self._reset_backoff(backoff_key)
+                consecutive_errors = 0
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"WS OB {symbol} Error: {e}")
-                await asyncio.sleep(2)
+                consecutive_errors += 1
+                print(f"⚠ WS OB {symbol} Error ({consecutive_errors}/{max_consecutive_errors}): {e}")
+
+                if consecutive_errors >= max_consecutive_errors:
+                    print(f"🔥 CIRCUIT BREAKER: Orderbook WS for {symbol} failed {max_consecutive_errors} times, stopping")
+                    break
+
+                await self._exponential_backoff_sleep(backoff_key)
 
     async def watch_tr_for_symbol(self, symbol):
         raw_sym = symbol.replace('/', '').replace(':USDT', '')
+        backoff_key = f"tr_{symbol}"
+        consecutive_errors = 0
+        max_consecutive_errors = 10
+
         while True:
             try:
                 trades = await self.exchange.watch_trades(symbol)
@@ -63,38 +105,63 @@ class VortexBot:
                     # Tick format: {'q': qty, 'm': isBuyerMaker (True if sell)}
                     tick_data = {'q': t.get('amount', 0), 'm': t.get('side', 'buy') == 'sell'}
                     self.storage.add_tick(raw_sym, tick_data)
+
+                # Reset on success
+                self._reset_backoff(backoff_key)
+                consecutive_errors = 0
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"WS TR {symbol} Error: {e}")
-                await asyncio.sleep(2)
+                consecutive_errors += 1
+                print(f"⚠ WS TR {symbol} Error ({consecutive_errors}/{max_consecutive_errors}): {e}")
+
+                if consecutive_errors >= max_consecutive_errors:
+                    print(f"🔥 CIRCUIT BREAKER: Trades WS for {symbol} failed {max_consecutive_errors} times, stopping")
+                    break
+
+                await self._exponential_backoff_sleep(backoff_key)
                 
     async def watch_klines_for_symbol(self, symbol, timeframe='1m'):
         raw_sym = symbol.replace('/', '').replace(':USDT', '')
-        
+        backoff_key = f"kline_{symbol}_{timeframe}"
+        consecutive_errors = 0
+        max_consecutive_errors = 10
+
         # Pre-fetch historical candles to bootstrap indicator math
         try:
             hist = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=96)
             self.storage.set_klines(raw_sym, timeframe, hist)
         except Exception as e:
-            print(f"Prefetch Kline Error for {symbol}: {e}")
-            
+            print(f"⚠ Prefetch Kline Error for {symbol}: {e}")
+
         while True:
             try:
                 new_klines = await self.exchange.watch_ohlcv(symbol, timeframe)
                 current_klines = self.storage.get_klines(raw_sym, timeframe)
-                
+
                 curr_dict = {k[0]: k for k in current_klines}
                 for k in new_klines:
                     curr_dict[k[0]] = k
-                    
+
                 merged = sorted(curr_dict.values(), key=lambda x: x[0])[-96:]
                 self.storage.set_klines(raw_sym, timeframe, merged)
+
+                # Reset on success
+                self._reset_backoff(backoff_key)
+                consecutive_errors = 0
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"WS Kline {symbol} {timeframe} Error: {e}")
-                await asyncio.sleep(2)
+                consecutive_errors += 1
+                print(f"⚠ WS Kline {symbol} {timeframe} Error ({consecutive_errors}/{max_consecutive_errors}): {e}")
+
+                if consecutive_errors >= max_consecutive_errors:
+                    print(f"🔥 CIRCUIT BREAKER: Kline WS for {symbol} {timeframe} failed {max_consecutive_errors} times, stopping")
+                    break
+
+                await self._exponential_backoff_sleep(backoff_key)
 
     async def poll_sentiment_data(self, symbol):
         """Polls REST endpoints every 30 seconds for Engine 4."""
