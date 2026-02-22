@@ -173,9 +173,6 @@ class VortexBot:
                     signals = {"e1": s1, "e2": s2, "e3": s3, "e4": s4}
                     dec = self.decision.evaluate(signals, s5)
                     
-                    if symbol == "BTC/USDT:USDT":
-                        print(f"DEBUG BTC: 1m={len(klines_1m)}, 15m={len(klines_15m)}")
-                    
                     current_time = datetime.datetime.now().strftime('%H:%M:%S')
                     price = s1.get("micro_price", 0)
                     
@@ -195,6 +192,12 @@ class VortexBot:
                         
                         if price > 0:
                             risk_params = self.risk.calculate(dec, price, s3.get('atr', 0), s5.get('param_overrides', {}))
+                            
+                            # Catch Fee/Spread Rejections from RiskManager
+                            if risk_params is not None and risk_params.get("action") == "NO_TRADE":
+                                print(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | SNT: {s4.get('direction', 'UNK')} | SKIP: {risk_params.get('reason')}")
+                                continue
+                                
                             order = await self.executor.execute_trade(raw_sym, dec, risk_params, price)
                             if order:
                                 if order.get("status", "SUCCESS") == "SUCCESS":

@@ -1,3 +1,5 @@
+from config import STRATA_V_RAT_TRIGGER, STRATA_STREAK_TRIGGER, STRATA_S_RAT_TRIGGER, STRATB_RSI_LOWER, STRATB_RSI_UPPER, STRATC_LIQ_PROXIMITY, STRATC_S_RAT_TRIGGER
+
 class StrategyA:
     def evaluate(self, signals, e5_filter):
         e2 = signals.get('e2', {})
@@ -9,15 +11,15 @@ class StrategyA:
         s_rat = e2.get('spike_ratio') or 0
         str1 = e1.get('strength') or 0
         
-        # TRIGGER - Reduced strictness for short-term scalping
-        if not ((v_rat > 1.5 and streak >= 5 and v_spike) or s_rat > 1.8):
+        # TRIGGER - Dynamic strictness for short-term scalping
+        if not ((v_rat > STRATA_V_RAT_TRIGGER and streak >= STRATA_STREAK_TRIGGER and v_spike) or s_rat > STRATA_S_RAT_TRIGGER):
             return 0
             
         score = 0.0
         score += 0.4 # Base qualifying
         
-        if v_rat > 1.5: score += 0.4
-        if streak >= 6: score += 0.3
+        if v_rat > STRATA_V_RAT_TRIGGER: score += 0.4
+        if streak >= (STRATA_STREAK_TRIGGER + 1): score += 0.3
         if str1 > 0.40: score += 0.2
         
         regime = e5_filter.get('regime', '')
@@ -38,14 +40,14 @@ class StrategyB:
         if rsi is None or bb_zone is None:
             return 0
             
-        # TRIGGER - Expanded RSI zones for rapid mean reversion 
-        if not ((rsi < 35 or rsi > 65) and bb_zone in ["UPPER", "LOWER"]):
+        # TRIGGER - Dynamic RSI zones for rapid mean reversion 
+        if not ((rsi < STRATB_RSI_LOWER or rsi > STRATB_RSI_UPPER) and bb_zone in ["UPPER", "LOWER"]):
             return 0
             
         score = 0.0
         score += 0.4 # Base qualifying
         
-        if rsi < 30 or rsi > 70: score += 0.4
+        if rsi < (STRATB_RSI_LOWER - 5) or rsi > (STRATB_RSI_UPPER + 5): score += 0.4
         if bb_zone in ["UPPER", "LOWER"]: score += 0.3
         if str1 > 0.30: score += 0.2
         
@@ -64,16 +66,16 @@ class StrategyC:
         v_spike = e2.get('volume_spike') or False
         s_rat = e2.get('spike_ratio') or 0
         
-        # TRIGGER - Lowered liquidation proxy requirement
-        if not (liq > 0.40 and (v_spike or s_rat > 1.5)):
+        # TRIGGER - Dynamic liquidation proxy requirement
+        if not (liq > STRATC_LIQ_PROXIMITY and (v_spike or s_rat > STRATC_S_RAT_TRIGGER)):
             return 0
             
         score = 0.0
         score += 0.4 # Base qualifying
         
-        if liq > 0.40: score += 0.5
-        if s_rat > 1.5: score += 0.3
+        if liq > STRATC_LIQ_PROXIMITY: score += 0.5
+        if s_rat > STRATC_S_RAT_TRIGGER: score += 0.3
         
-        if liq > 0.60: score += 0.2 
+        if liq > (STRATC_LIQ_PROXIMITY + 0.20): score += 0.2 
         
         return max(0, score)

@@ -1,7 +1,8 @@
 import logging
 import json
 import ccxt.async_support as ccxt
-from config import BASE_BALANCE, RISK_PER_TRADE, MAX_LEVERAGE, API_KEY, SECRET_KEY
+import ccxt.async_support as ccxt
+from config import BASE_BALANCE, RISK_PER_TRADE, MAX_LEVERAGE, API_KEY, SECRET_KEY, EXCHANGE_TAKER_FEE, SLIPPAGE_BUFFER, MIN_RR_RATIO, STRAT_MIN_SCORE, STRAT_AGREEMENT_REQ
 from strategies import StrategyA, StrategyB, StrategyC
 
 # Configure Order Logger (Save orders to file)
@@ -42,17 +43,17 @@ class DecisionEngine:
         if not e5_filter.get('tradeable', True) or not e5_filter.get('spread_ok', True):
             return {"action": "NO_TRADE", "final_score": final_score, "reason": "E5 Filter: Not tradeable or spread too high"}
             
-        # Reduced strictness for short-term active scalping
-        if abs(final_score) < 0.25:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Final score {abs(final_score):.2f} < 0.25"}
+        # Reduced strictness for short-term active scalping (Dynamic)
+        if abs(final_score) < STRAT_MIN_SCORE:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Final score {abs(final_score):.2f} < {STRAT_MIN_SCORE} min"}
             
         action = "LONG" if final_score > 0 else "SHORT"
         action_val = 1 if action == "LONG" else -1
         
-        # Agreement Check: Reduced to 2 for aggressive short-term trading
+        # Agreement Check: Reduced for aggressive short-term trading (Dynamic)
         agreements = sum(1 for d in [d1, d2, d3, d4] if d == action_val)
-        if agreements < 2:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Only {agreements} engines agree (need 2 for scalping)"}
+        if agreements < STRAT_AGREEMENT_REQ:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Only {agreements} engines agree (need {STRAT_AGREEMENT_REQ} for scalping)"}
             
         # E1 Check
         if d1 == -action_val:
@@ -100,23 +101,25 @@ class RiskManager:
         tp1_distance = 0
         
         if strategy == "A":
-            sl_distance = safe_atr * 0.8 * atr_multiplier_sl
-            tp1_distance = safe_atr * 1.3 * atr_multiplier_tp
+            sl_distance = safe_atr * 0.4 * atr_multiplier_sl # Extremely tight SL for momentum failures
+            tp1_distance = safe_atr * 0.6 * atr_multiplier_tp # Quick TP for breakout scalps
         elif strategy == "B":
-            sl_distance = safe_atr * 1.0 * atr_multiplier_sl
-            tp1_distance = safe_atr * 1.5 * atr_multiplier_tp # Assumed VWAP/BB middle approx distance
+            sl_distance = safe_atr * 0.5 * atr_multiplier_sl
+            tp1_distance = safe_atr * 0.8 * atr_multiplier_tp # Mean reversion TP
         elif strategy == "C":
-            sl_distance = safe_atr * 0.5 * atr_multiplier_sl # Tight assuming edge of cluster
-            tp1_distance = safe_atr * 1.0 * atr_multiplier_tp
+            sl_distance = safe_atr * 0.3 * atr_multiplier_sl # Lightning tight SL for liquidation clusters
+            tp1_distance = safe_atr * 0.5 * atr_multiplier_tp
             
-        # Min TP check (assuming fee 0.036% round trip + buffer)
-        min_tp = current_price * 0.00086 
+        # Min TP check (Dynamic calculation based on Exchange Taker Fees and Slippage Buffer defined in .env)
+        # For a scalping strategy, if the actual price movement required to hit TP is less than the round-trip fee + slip, it's just paying fees.
+        min_tp_pct = (EXCHANGE_TAKER_FEE * 2) + SLIPPAGE_BUFFER 
+        min_tp = current_price * min_tp_pct
         if tp1_distance < min_tp:
-            return None # Reject, TP too small
+            return {"action": "NO_TRADE", "reason": f"Target Profit ({tp1_distance:.4f}) too small. Fails {min_tp_pct*100:.3f}% dynamic fee+slippage test."}
             
-        # R:R Check
-        if sl_distance == 0 or (tp1_distance / sl_distance) < 1.3:
-            return None # Reject, R:R not 1.3
+        # R:R Check - Dynamic floor for high win-rate scalping
+        if sl_distance == 0 or (tp1_distance / sl_distance) < MIN_RR_RATIO:
+            return {"action": "NO_TRADE", "reason": f"R:R ({tp1_distance/sl_distance if sl_distance else 0:.2f}) < {MIN_RR_RATIO} min"}
         
         pos_size_usdt = risk_amount / (sl_distance / current_price) if sl_distance > 0 else 0
         leverage = min(pos_size_usdt / (BASE_BALANCE * 0.1), e5_param.get('leverage_max', MAX_LEVERAGE), 12)

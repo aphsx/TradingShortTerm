@@ -1,4 +1,5 @@
 from utils import calculate_imbalance, calculate_rsi, calculate_atr, calculate_atr_array, calculate_bollinger_bands, calculate_adx, calculate_percentiles
+from config import E1_IMBALANCE_THRESHOLD, E2_MOMENTUM_THRESHOLD, E4_FUNDING_RATE_THRESHOLD
 
 class Engine1OrderFlow:
     def process(self, orderbook, ticks):
@@ -17,8 +18,8 @@ class Engine1OrderFlow:
         imbalance = calculate_imbalance(bids, asks)
         
         direction = "NEUTRAL"
-        if imbalance > 0.3: direction = "BUY_PRESSURE"
-        elif imbalance < -0.3: direction = "SELL_PRESSURE"
+        if imbalance > E1_IMBALANCE_THRESHOLD: direction = "BUY_PRESSURE" # Aggressively catch micro liquidity imbalances
+        elif imbalance < -E1_IMBALANCE_THRESHOLD: direction = "SELL_PRESSURE"
         
         return {
             "direction": direction,
@@ -47,8 +48,8 @@ class Engine2Tick:
         aggressor_ratio = buy_vol / (buy_vol + sell_vol) if (buy_vol + sell_vol) > 0 else 0.5
         
         direction = "NEUTRAL"
-        if aggressor_ratio > 0.65: direction = "MOMENTUM_LONG"
-        elif aggressor_ratio < 0.35: direction = "MOMENTUM_SHORT"
+        if aggressor_ratio > E2_MOMENTUM_THRESHOLD: direction = "MOMENTUM_LONG" # Hair-trigger momentum
+        elif aggressor_ratio < (1.0 - E2_MOMENTUM_THRESHOLD): direction = "MOMENTUM_SHORT"
         
         return {
             "direction": direction,
@@ -124,10 +125,10 @@ class Engine4Sentiment:
             
         # Funding Rate
         funding_signal = "NEUTRAL"
-        if funding_rate > 0.0003: # > 0.03%
+        if funding_rate > E4_FUNDING_RATE_THRESHOLD: # React to mild expensive funding
             funding_signal = "LONGS_EXPENSIVE"
             if direction == "CROWD_LONG": strength += 0.3
-        elif funding_rate < -0.0001: # < -0.01%
+        elif funding_rate < -E4_FUNDING_RATE_THRESHOLD: # React to mild shorts compression
             funding_signal = "SHORTS_EXPENSIVE"
             if direction == "CROWD_SHORT": strength += 0.3
             
