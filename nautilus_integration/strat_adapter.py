@@ -1,5 +1,5 @@
 from datetime import timedelta
-from nautilus_trader.strategy import Strategy
+from nautilus_trader.trading.strategy import Strategy
 from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 

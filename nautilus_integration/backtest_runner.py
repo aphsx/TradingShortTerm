@@ -11,7 +11,7 @@ from nautilus_integration.strat_adapter import VortexNautilusAdapter
 class VortexConfig(StrategyConfig):
     instrument_id: InstrumentId
 
-def run_vortex_backtest():
+def run_vortex_backtest(csv_path=None):
     """
     Main script to run a NautilusTrader backtest for the VORTEX-7 engine.
     """
@@ -28,15 +28,50 @@ def run_vortex_backtest():
     strategy = VortexNautilusAdapter(config=strat_config)
     engine.add_strategy(strategy)
     
-    # 4. Data Loading (Example)
-    # ในการใช้งานจริง ต้องโหลดข้อมูลจาก CSV/Parquet ผ่าน engine.add_data
-    # ตัวอย่างนี้เป็นการเตรียมโครงสร้าง
-    print("--- VORTEX-7 Nautilus Backtest Initiated ---")
-    print(f"Testing Symbol: {instrument.id}")
+    # 4. Data Loading
+    if csv_path and os.path.exists(csv_path):
+        import pandas as pd
+        from nautilus_trader.model.data import Bar
+        from nautilus_trader.core.datetime import dt_to_unix_nanos
+        
+        print(f"Loading data from {csv_path}...")
+        df = pd.DataFrame()
+        try:
+             df = pd.read_csv(csv_path)
+             bars = []
+             for _, row in df.iterrows():
+                 bar = Bar(
+                     instrument_id=instrument.id,
+                     bar_type="1m",
+                     ts_event=dt_to_unix_nanos(pd.to_datetime(row['timestamp'], unit='ms')),
+                     ts_init=dt_to_unix_nanos(pd.to_datetime(row['timestamp'], unit='ms')),
+                     open=float(row['open']),
+                     high=float(row['high']),
+                     low=float(row['low']),
+                     close=float(row['close']),
+                     volume=float(row['volume']),
+                 )
+                 bars.append(bar)
+             
+             engine.add_data(bars)
+             print(f"Successfully loaded {len(bars)} bars.")
+        except Exception as e:
+             print(f"Error loading data: {e}")
+    else:
+        print("No CSV data provided, test won't run with real history.")
     
-    # engine.run()
-    print("Note: You need to provide historical data (bars/ticks) to run the simulation.")
-    print("Use 'engine.add_data(data)' before calling 'engine.run()'")
+    # 5. Run simulation
+    print("--- VORTEX-7 Nautilus Backtest Initiated ---")
+    if csv_path:
+        engine.run()
+        print("Backtest Finished! Check logs for results.")
+    else:
+        print("Note: Provide a CSV path to run the actual simulation.")
 
 if __name__ == "__main__":
-    run_vortex_backtest()
+    # Find the latest data file if not specified
+    import glob
+    data_files = glob.glob("nautilus_integration/data_BTCUSDT_1m_*.csv")
+    latest_file = max(data_files) if data_files else None
+    
+    run_vortex_backtest(latest_file)

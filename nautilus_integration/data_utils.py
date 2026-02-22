@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from nautilus_trader.core.datetime import dt_to_unix_nanos
-from nautilus_trader.model.data import Bar, Tick
+from nautilus_trader.model.data import Bar
 from nautilus_trader.model.enums import PriceType
 from nautilus_trader.model.identifiers import InstrumentId
 
