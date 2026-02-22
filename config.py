@@ -67,13 +67,13 @@ if _PYDANTIC_AVAILABLE:
         decision_alignment_min: float = Field(default=0.35, ge=0, le=1)
 
         # ── Strategy global thresholds ────────────────────────────────────
-        strat_min_score: float = Field(default=0.25, ge=0, lt=1)
-        strat_agreement_req: int = Field(default=2, ge=1, le=4)
+        strat_min_score: float = Field(default=0.18, ge=0, lt=1)
+        strat_agreement_req: int = Field(default=1, ge=1, le=4)
 
         # ── Strategy A (Momentum Breakout) ────────────────────────────────
-        strata_v_rat_trigger: float = Field(default=1.5, gt=0)
-        strata_streak_trigger: int = Field(default=5, ge=1)
-        strata_s_rat_trigger: float = Field(default=1.8, gt=0)
+        strata_v_rat_trigger: float = Field(default=1.2, gt=0)
+        strata_streak_trigger: int = Field(default=3, ge=1)
+        strata_s_rat_trigger: float = Field(default=1.4, gt=0)
 
         # ── Strategy B (Mean Reversion) ────────────────────────────────────
         stratb_rsi_lower: float = Field(default=35.0, ge=0, le=50)
@@ -148,11 +148,11 @@ if _PYDANTIC_AVAILABLE:
                 decision_vpin_min=float(os.getenv("DECISION_VPIN_MIN", "0.35")),
                 decision_ofi_velocity_min=float(os.getenv("DECISION_OFI_VELOCITY_MIN", "1.5")),
                 decision_alignment_min=float(os.getenv("DECISION_ALIGNMENT_MIN", "0.35")),
-                strat_min_score=float(os.getenv("STRAT_MIN_SCORE", "0.25")),
-                strat_agreement_req=int(os.getenv("STRAT_AGREEMENT_REQ", "2")),
-                strata_v_rat_trigger=float(os.getenv("STRATA_V_RAT_TRIGGER", "1.5")),
-                strata_streak_trigger=int(os.getenv("STRATA_STREAK_TRIGGER", "5")),
-                strata_s_rat_trigger=float(os.getenv("STRATA_S_RAT_TRIGGER", "1.8")),
+                strat_min_score=float(os.getenv("STRAT_MIN_SCORE", "0.18")),
+                strat_agreement_req=int(os.getenv("STRAT_AGREEMENT_REQ", "1")),
+                strata_v_rat_trigger=float(os.getenv("STRATA_V_RAT_TRIGGER", "1.2")),
+                strata_streak_trigger=int(os.getenv("STRATA_STREAK_TRIGGER", "3")),
+                strata_s_rat_trigger=float(os.getenv("STRATA_S_RAT_TRIGGER", "1.4")),
                 stratb_rsi_lower=float(os.getenv("STRATB_RSI_LOWER", "35")),
                 stratb_rsi_upper=float(os.getenv("STRATB_RSI_UPPER", "65")),
                 stratc_liq_proximity=float(os.getenv("STRATC_LIQ_PROXIMITY", "0.40")),
@@ -274,12 +274,12 @@ else:
     DECISION_OFI_VELOCITY_MIN  = float(os.getenv("DECISION_OFI_VELOCITY_MIN", "1.5"))
     DECISION_ALIGNMENT_MIN     = float(os.getenv("DECISION_ALIGNMENT_MIN", "0.35"))
 
-    STRAT_MIN_SCORE     = float(os.getenv("STRAT_MIN_SCORE", "0.25"))
-    STRAT_AGREEMENT_REQ = int(os.getenv("STRAT_AGREEMENT_REQ", "2"))
+    STRAT_MIN_SCORE     = float(os.getenv("STRAT_MIN_SCORE", "0.18"))
+    STRAT_AGREEMENT_REQ = int(os.getenv("STRAT_AGREEMENT_REQ", "1"))
 
-    STRATA_V_RAT_TRIGGER  = float(os.getenv("STRATA_V_RAT_TRIGGER", "1.5"))
-    STRATA_STREAK_TRIGGER = int(os.getenv("STRATA_STREAK_TRIGGER", "5"))
-    STRATA_S_RAT_TRIGGER  = float(os.getenv("STRATA_S_RAT_TRIGGER", "1.8"))
+    STRATA_V_RAT_TRIGGER  = float(os.getenv("STRATA_V_RAT_TRIGGER", "1.2"))
+    STRATA_STREAK_TRIGGER = int(os.getenv("STRATA_STREAK_TRIGGER", "3"))
+    STRATA_S_RAT_TRIGGER  = float(os.getenv("STRATA_S_RAT_TRIGGER", "1.4"))
 
     STRATB_RSI_LOWER = float(os.getenv("STRATB_RSI_LOWER", "35"))
     STRATB_RSI_UPPER = float(os.getenv("STRATB_RSI_UPPER", "65"))

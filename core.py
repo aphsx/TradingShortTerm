@@ -240,15 +240,16 @@ class RiskManager:
         sl_distance = 0
         tp1_distance = 0
         
+        # Scalping mode: tight SL/TP to enter-exit fast for quick profit
         if strategy == "A":
-            sl_distance = safe_atr * 0.4 * atr_multiplier_sl
-            tp1_distance = safe_atr * 0.6 * atr_multiplier_tp
+            sl_distance  = safe_atr * 0.25 * atr_multiplier_sl   # was 0.4
+            tp1_distance = safe_atr * 0.40 * atr_multiplier_tp   # was 0.6 → R:R 1.6
         elif strategy == "B":
-            sl_distance = safe_atr * 0.5 * atr_multiplier_sl
-            tp1_distance = safe_atr * 0.8 * atr_multiplier_tp
+            sl_distance  = safe_atr * 0.30 * atr_multiplier_sl   # was 0.5
+            tp1_distance = safe_atr * 0.45 * atr_multiplier_tp   # was 0.8 → R:R 1.5
         elif strategy == "C":
-            sl_distance = safe_atr * 0.3 * atr_multiplier_sl
-            tp1_distance = safe_atr * 0.5 * atr_multiplier_tp
+            sl_distance  = safe_atr * 0.20 * atr_multiplier_sl   # was 0.3
+            tp1_distance = safe_atr * 0.30 * atr_multiplier_tp   # was 0.5 → R:R 1.5
             
         # Min TP check
         min_tp_pct = (EXCHANGE_TAKER_FEE * 2) + SLIPPAGE_BUFFER 

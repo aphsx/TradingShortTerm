@@ -53,9 +53,13 @@ class VortexNautilusAdapter(Strategy):
         self.tp_price = 0.0
         self.sl_price = 0.0
         self.entry_bar = 0
-        self.max_hold_bars = 20     # Auto-close after 20 bars (20 minutes) max
+        self.max_hold_bars = 10     # Scalping: auto-close after 10 bars (10 min) max
         self.bars_since_close = 99  # Start ready to trade immediately
-        self.min_bars_between_trades = 3  # Wait 3 bars after each close
+        self.min_bars_between_trades = 1  # Scalping: only 1 bar cooldown between trades
+
+        # 5. E2 streak tracking — counts consecutive same-direction bars for bar-only backtest
+        self._bull_streak = 0
+        self._bear_streak = 0
 
     def on_start(self):
         """Called when backtest or live starts"""
@@ -123,8 +127,12 @@ class VortexNautilusAdapter(Strategy):
         """
         Simulate tick-derived E2 momentum signal from bar OHLCV.
         In bar-only backtest, real tick data is unavailable.
-        Bullish bar (close > open AND close > prev close) → MOMENTUM_LONG.
-        Bearish bar (close < open AND close < prev close) → MOMENTUM_SHORT.
+
+        Key improvements for scalping backtest:
+        - Tracks actual consecutive same-direction bars (streak) using instance state.
+        - Detects volume spikes vs recent average volume (last 20 bars).
+        - Computes velocity_ratio from current bar body vs recent average body.
+        - All values match the live E2 format so strategies can fire properly.
         """
         if len(self.klines_history) < 2:
             return {"direction": "NEUTRAL", "strength": 0.0, "velocity_ratio": 1.0,
@@ -133,36 +141,63 @@ class VortexNautilusAdapter(Strategy):
 
         curr_open  = float(bar.open)
         curr_close = float(bar.close)
+        curr_vol   = float(bar.volume)
         prev_close = float(self.klines_history[-2][4])
 
         body_pct = abs(curr_close - curr_open) / curr_open if curr_open > 0 else 0
-        strength  = min(1.0, body_pct * 200)   # Scale: 0.5% body → strength 1.0
+        strength  = min(1.0, body_pct * 200)   # 0.5% body → strength 1.0
 
         bull = curr_close > curr_open and curr_close > prev_close
         bear = curr_close < curr_open and curr_close < prev_close
 
+        # --- Streak tracking (consecutive same-direction bars) ---
         if bull:
-            direction      = "MOMENTUM_LONG"
+            self._bull_streak += 1
+            self._bear_streak = 0
+            direction = "MOMENTUM_LONG"
+            streak = self._bull_streak
             aggressor_ratio = min(0.9, 0.55 + strength * 0.3)
-            alignment       = 0.6
+            alignment = min(1.0, 0.4 + self._bull_streak * 0.12)
         elif bear:
-            direction      = "MOMENTUM_SHORT"
+            self._bear_streak += 1
+            self._bull_streak = 0
+            direction = "MOMENTUM_SHORT"
+            streak = self._bear_streak
             aggressor_ratio = max(0.1, 0.45 - strength * 0.3)
-            alignment       = 0.6
+            alignment = min(1.0, 0.4 + self._bear_streak * 0.12)
         else:
-            direction      = "NEUTRAL"
+            self._bull_streak = 0
+            self._bear_streak = 0
+            direction = "NEUTRAL"
+            streak = 0
             aggressor_ratio = 0.5
-            alignment       = 0.0
+            alignment = 0.0
+
+        # --- Volume spike detection vs recent 20-bar average ---
+        recent_vols = [float(k[5]) for k in self.klines_history[-20:] if float(k[5]) > 0]
+        avg_vol = sum(recent_vols) / len(recent_vols) if recent_vols else curr_vol
+        spike_ratio = curr_vol / avg_vol if avg_vol > 0 else 1.0
+        volume_spike = spike_ratio > 1.5
+
+        # --- Velocity ratio: current body vs recent 10-bar average body ---
+        recent_bodies = [
+            abs(float(k[4]) - float(k[1])) / float(k[1])
+            for k in self.klines_history[-10:]
+            if float(k[1]) > 0
+        ]
+        avg_body = sum(recent_bodies) / len(recent_bodies) if recent_bodies else body_pct
+        velocity_ratio = (body_pct / avg_body) if avg_body > 0 else 1.0
+        velocity_ratio = max(0.1, min(5.0, velocity_ratio))
 
         return {
             "direction": direction,
             "strength": strength,
-            "velocity_ratio": 1.5 if bull or bear else 1.0,
+            "velocity_ratio": velocity_ratio,
             "aggressor_ratio": aggressor_ratio,
             "alignment": alignment,
-            "streak": 1 if (bull or bear) else 0,
-            "volume_spike": False,
-            "spike_ratio": 1.0
+            "streak": streak,
+            "volume_spike": volume_spike,
+            "spike_ratio": spike_ratio
         }
 
     def on_order_book(self, order_book):
@@ -190,11 +225,32 @@ class VortexNautilusAdapter(Strategy):
         Check bar high/low against TP/SL and check max hold time.
         For LONG: SL if bar.low <= sl_price, TP if bar.high >= tp_price.
         For SHORT: SL if bar.high >= sl_price, TP if bar.low <= tp_price.
+
+        Scalping enhancement: move SL to breakeven once 50% of TP distance is covered.
+        This locks in a no-loss exit even if the trade reverses before hitting TP.
         """
         bar_high  = float(bar.high)
         bar_low   = float(bar.low)
         bar_close = float(bar.close)
         bars_held = self.bar_count - self.entry_bar
+
+        # --- Breakeven stop: trail SL to entry once halfway to TP ---
+        if self.position_side == "LONG":
+            tp_dist = self.tp_price - self.entry_price
+            if tp_dist > 0:
+                profit_pct = (bar_close - self.entry_price) / tp_dist
+                if profit_pct >= 0.5:
+                    new_sl = self.entry_price  # Move to breakeven
+                    if new_sl > self.sl_price:
+                        self.sl_price = new_sl
+        elif self.position_side == "SHORT":
+            tp_dist = self.entry_price - self.tp_price
+            if tp_dist > 0:
+                profit_pct = (self.entry_price - bar_close) / tp_dist
+                if profit_pct >= 0.5:
+                    new_sl = self.entry_price  # Move to breakeven
+                    if new_sl < self.sl_price:
+                        self.sl_price = new_sl
 
         close_reason = None
 
@@ -282,8 +338,8 @@ class VortexNautilusAdapter(Strategy):
             return
 
         # Minimum confidence gate: skip weak signals that can't cover fees.
-        # At 0.04% taker fee × 2 sides = 0.08% cost; need some edge above that.
-        MIN_CONFIDENCE = 15.0
+        # Scalping mode: lowered to 10 since we trade more frequently with tighter TP/SL.
+        MIN_CONFIDENCE = 10.0
         if decision.get('confidence', 0) < MIN_CONFIDENCE:
             reason = f"Low confidence ({decision['confidence']:.1f}% < {MIN_CONFIDENCE}%)"
             self.rejection_reasons[reason] = self.rejection_reasons.get(reason, 0) + 1
