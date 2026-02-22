@@ -6,6 +6,26 @@ class Engine1OrderFlow:
         # Track imbalance history for velocity calculation
         self.imbalance_history = {}  # {symbol: [(timestamp, imbalance), ...]}
         self.max_history_size = 50  # Keep last 50 snapshots (~10 seconds at 200ms intervals)
+        self.last_access_time = {}  # Track last access per symbol for cleanup
+        self.cleanup_threshold_seconds = 300  # Remove symbols not accessed for 5 minutes
+
+    def _cleanup_stale_symbols(self):
+        """Remove symbols that haven't been accessed recently to prevent memory leak"""
+        import time
+        current_time = time.time()
+        stale_symbols = [
+            sym for sym, last_time in self.last_access_time.items()
+            if current_time - last_time > self.cleanup_threshold_seconds
+        ]
+
+        for sym in stale_symbols:
+            if sym in self.imbalance_history:
+                del self.imbalance_history[sym]
+            if sym in self.last_access_time:
+                del self.last_access_time[sym]
+
+        if stale_symbols:
+            print(f"🧹 Engine1 cleaned up {len(stale_symbols)} stale symbols: {stale_symbols}")
 
     def _update_imbalance_history(self, symbol, imbalance):
         """Track imbalance over time to calculate velocity"""
@@ -16,10 +36,15 @@ class Engine1OrderFlow:
             self.imbalance_history[symbol] = []
 
         self.imbalance_history[symbol].append((timestamp, imbalance))
+        self.last_access_time[symbol] = timestamp  # Track access for cleanup
 
         # Keep only recent history
         if len(self.imbalance_history[symbol]) > self.max_history_size:
             self.imbalance_history[symbol].pop(0)
+
+        # Periodic cleanup (every ~100 calls to avoid overhead)
+        if len(self.imbalance_history) > 20 and timestamp % 100 < 1:
+            self._cleanup_stale_symbols()
 
     def _calculate_ofi_velocity(self, symbol, window_seconds=0.3):
         """
@@ -127,6 +152,26 @@ class Engine2Tick:
         # Track tick history for multi-timeframe analysis
         self.tick_history = {}  # {symbol: [(timestamp, tick_data), ...]}
         self.max_history_seconds = 20  # Keep 20 seconds of history
+        self.last_access_time = {}  # Track last access per symbol for cleanup
+        self.cleanup_threshold_seconds = 300  # Remove symbols not accessed for 5 minutes
+
+    def _cleanup_stale_symbols(self):
+        """Remove symbols that haven't been accessed recently to prevent memory leak"""
+        import time
+        current_time = time.time()
+        stale_symbols = [
+            sym for sym, last_time in self.last_access_time.items()
+            if current_time - last_time > self.cleanup_threshold_seconds
+        ]
+
+        for sym in stale_symbols:
+            if sym in self.tick_history:
+                del self.tick_history[sym]
+            if sym in self.last_access_time:
+                del self.last_access_time[sym]
+
+        if stale_symbols:
+            print(f"🧹 Engine2 cleaned up {len(stale_symbols)} stale symbols: {stale_symbols}")
 
     def _update_tick_history(self, symbol, ticks):
         """Store ticks with timestamps for multi-timeframe analysis"""
@@ -140,11 +185,17 @@ class Engine2Tick:
         for tick in ticks:
             self.tick_history[symbol].append((current_time, tick))
 
+        self.last_access_time[symbol] = current_time  # Track access for cleanup
+
         # Clean old data
         cutoff = current_time - self.max_history_seconds
         self.tick_history[symbol] = [
             (ts, t) for ts, t in self.tick_history[symbol] if ts >= cutoff
         ]
+
+        # Periodic cleanup (every ~100 calls to avoid overhead)
+        if len(self.tick_history) > 20 and current_time % 100 < 1:
+            self._cleanup_stale_symbols()
 
     def _calculate_aggressor_ratio(self, ticks):
         """Calculate buy/sell aggressor ratio from tick data"""
