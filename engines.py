@@ -1,5 +1,8 @@
 from utils import calculate_imbalance, calculate_rsi, calculate_atr, calculate_atr_array, calculate_bollinger_bands, calculate_adx, calculate_percentiles, calculate_vpin, calculate_depth_imbalance_multi
 from config import E1_IMBALANCE_THRESHOLD, E2_MOMENTUM_THRESHOLD, E4_FUNDING_RATE_THRESHOLD
+from logger_config import get_logger
+
+logger = get_logger(__name__)
 
 class Engine1OrderFlow:
     def __init__(self):
@@ -25,7 +28,7 @@ class Engine1OrderFlow:
                 del self.last_access_time[sym]
 
         if stale_symbols:
-            print(f"🧹 Engine1 cleaned up {len(stale_symbols)} stale symbols: {stale_symbols}")
+            logger.debug(f"Engine1 cleaned up {len(stale_symbols)} stale symbols: {stale_symbols}")
 
     def _update_imbalance_history(self, symbol, imbalance):
         """Track imbalance over time to calculate velocity"""
@@ -171,7 +174,7 @@ class Engine2Tick:
                 del self.last_access_time[sym]
 
         if stale_symbols:
-            print(f"🧹 Engine2 cleaned up {len(stale_symbols)} stale symbols: {stale_symbols}")
+            logger.debug(f"Engine2 cleaned up {len(stale_symbols)} stale symbols: {stale_symbols}")
 
     def _update_tick_history(self, symbol, ticks):
         """Store ticks with timestamps for multi-timeframe analysis"""

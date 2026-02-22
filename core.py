@@ -3,14 +3,10 @@ import json
 import ccxt.async_support as ccxt
 from config import BASE_BALANCE, RISK_PER_TRADE, MIN_LEVERAGE, MAX_LEVERAGE, API_KEY, SECRET_KEY, EXCHANGE_TAKER_FEE, SLIPPAGE_BUFFER, MIN_RR_RATIO, STRAT_MIN_SCORE, STRAT_AGREEMENT_REQ
 from strategies import StrategyA, StrategyB, StrategyC
+from logger_config import get_logger
 
-# Configure Order Logger (Save orders to file)
-order_logger = logging.getLogger("OrderLogger")
-order_logger.setLevel(logging.INFO)
-if not order_logger.handlers:
-    fh = logging.FileHandler("orders.log", encoding="utf-8")
-    fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    order_logger.addHandler(fh)
+logger = get_logger(__name__)
+order_logger = get_logger("orders")
 
 class DecisionEngine:
     def evaluate(self, signals, e5_filter):
@@ -230,7 +226,7 @@ class Executor:
             price_precision = market['precision']['price']
         except Exception as e:
             # Fallback to safe defaults if market info unavailable
-            print(f"⚠ Warning: Could not fetch market precision for {ccxt_symbol}, using defaults: {e}")
+            logger.warning(f"Could not fetch market precision for {ccxt_symbol}, using defaults: {e}")
             qty_precision = 3
             price_precision = 2
         
@@ -253,7 +249,7 @@ class Executor:
         start_time = time.time()
         try:
             target_leverage = int(risk_params['leverage'])
-            print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Adjusting leverage to {target_leverage}x for {symbol}...")
+            logger.info(f"[{'TESTNET' if self.testnet else 'LIVE'}] Adjusting leverage to {target_leverage}x for {symbol}")
             # For binanceusdm module, it often requires the format BTC/USDT:USDT.
             if ":" not in symbol:
                  ccxt_symbol = f"{symbol.replace('USDT', '')}/USDT:USDT"
@@ -284,11 +280,11 @@ class Executor:
                 if current_leverage and abs(float(current_leverage) - target_leverage) > 0.1:
                     raise Exception(f"Leverage verification failed: expected {target_leverage}x, got {current_leverage}x")
 
-                print(f"✓ Leverage verified: {target_leverage}x")
+                logger.info(f"Leverage verified: {target_leverage}x")
             except asyncio.TimeoutError:
-                print(f"⚠ Warning: Leverage verification timed out, proceeding with caution")
+                logger.warning("Leverage verification timed out, proceeding with caution")
             except Exception as e:
-                print(f"⚠ Warning: Could not verify leverage: {e}")
+                logger.warning(f"Could not verify leverage: {e}")
             
             ccxt_side = 'buy' if side == 'LONG' else 'sell'
             ord_type = 'limit'
@@ -300,7 +296,7 @@ class Executor:
             #   - No slippage (we set exact price)
             #   - Better for high-latency (wait for price to come to us)
             # Trade-off: Order may not fill if price doesn't reach our level
-            print(f"[{'TESTNET' if self.testnet else 'LIVE MARKET'}] Placing POST-ONLY {side} limit @ {order_details['price']:.2f} (Predicted from OFI velocity)")
+            logger.info(f"[{'TESTNET' if self.testnet else 'LIVE'}] Placing POST-ONLY {side} limit @ {order_details['price']:.2f}")
 
             # Create order with timeout protection (prevent hanging)
             res = await asyncio.wait_for(
@@ -322,12 +318,12 @@ class Executor:
             order_details["status"] = "SUCCESS"
             order_details["execution_type"] = ord_type
             
-            print(f"CCXT Order Executed in {latency}ms! Order ID: {order_details['order_id']}")
+            logger.info(f"Order executed in {latency}ms! Order ID: {order_details['order_id']}")
             order_logger.info(f"SUCCESS | {json.dumps(order_details)}")
             
         except Exception as e:
             latency = int((time.time() - start_time) * 1000)
-            print(f"CCXT Error sending order after {latency}ms: {e}")
+            logger.error(f"Error sending order after {latency}ms: {e}")
             order_details["api_latency_ms"] = latency
             order_details["status"] = "API_ERROR"
             order_details["error_type"] = type(e).__name__
