@@ -42,3 +42,9 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+
+# --- Database Saving Policy ---
+# Only save non-trading signals every X seconds to reduce Supabase load.
+# Trades and their corresponding signals are always saved immediately.
+DB_LOG_INTERVAL = int(os.getenv("DB_LOG_INTERVAL", "300")) 
+

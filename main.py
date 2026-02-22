@@ -1,10 +1,11 @@
 import asyncio
 import ccxt.pro as ccxtpro
-from config import API_KEY, SECRET_KEY, TESTNET, TRADING_PAIRS
+from config import API_KEY, SECRET_KEY, TESTNET, TRADING_PAIRS, DB_LOG_INTERVAL
 from storage import DataStorage
 from engines import Engine1OrderFlow, Engine2Tick, Engine3Technical, Engine4Sentiment, Engine5Regime
 from core import DecisionEngine, RiskManager, Executor
 import datetime
+import time
 import traceback
 
 class VortexBot:
@@ -17,6 +18,9 @@ class VortexBot:
         self.e5 = Engine5Regime()
         self.decision = DecisionEngine()
         self.risk = RiskManager()
+        
+        # Track last database save time per symbol to reduce write frequency
+        self.last_db_log = {} 
         
         # Initialize CCXT Pro using the specific Futures exchange class
         exchange_config = {
@@ -176,91 +180,66 @@ class VortexBot:
                     current_time = datetime.datetime.now().strftime('%H:%M:%S')
                     price = s1.get("micro_price", 0)
 
-                    # === SAVE SIGNAL SNAPSHOT (Every Decision) ===
-                    # บันทึกทุกครั้งที่ตัดสินใจ แบบ non-blocking (ไม่ขวางลูปเทรด)
-                    asyncio.create_task(self.storage.save_signal_snapshot({
-                        "symbol": raw_sym,
-                        "action": dec["action"],
-                        "reason": dec.get("reason", ""),
-                        "final_score": dec.get("final_score", 0),
-                        "confidence": dec.get("confidence", 0),
-                        "strategy": dec.get("strategy", ""),
-                        "current_price": price,
-                        "atr": s3.get("atr", 0),
-
-                        # Engine 1: Order Flow
-                        "e1_direction": s1.get("direction"),
-                        "e1_strength": s1.get("strength"),
-                        "e1_conviction": s1.get("conviction"),
-                        "e1_imbalance": s1.get("imbalance"),
-                        "e1_imbalance_l5": s1.get("depth_imbalance", {}).get("imbalance_L5"),
-                        "e1_imbalance_l10": s1.get("depth_imbalance", {}).get("imbalance_L10"),
-                        "e1_imbalance_l20": s1.get("depth_imbalance", {}).get("imbalance_L20"),
-                        "e1_ofi_velocity": s1.get("ofi_velocity", 0),
-                        "e1_vpin": s1.get("vpin", 0),
-                        "e1_micro_price": s1.get("micro_price"),
-
-                        # Engine 2: Tick Momentum
-                        "e2_direction": s2.get("direction"),
-                        "e2_strength": s2.get("strength"),
-                        "e2_aggressor_ratio": s2.get("aggressor_ratio"),
-                        "e2_aggressor_1s": s2.get("aggressor_1s"),
-                        "e2_aggressor_5s": s2.get("aggressor_5s"),
-                        "e2_aggressor_15s": s2.get("aggressor_15s"),
-                        "e2_alignment": s2.get("alignment", 0),
-                        "e2_velocity_ratio": s2.get("velocity_ratio"),
-
-                        # Engine 3: Technical
-                        "e3_direction": s3.get("direction"),
-                        "e3_strength": s3.get("strength"),
-                        "e3_rsi": s3.get("rsi"),
-                        "e3_bb_zone": s3.get("bb_zone"),
-
-                        # Engine 4: Sentiment (Fixed: Mapping real data)
-                        "e4_direction": s4.get("direction"),
-                        "e4_strength": s4.get("strength"),
-                        "e4_ls_ratio": sentiment_data.get("ls_ratio", 0),
-                        "e4_funding_rate": sentiment_data.get("funding_rate", 0),
-                        "e4_long_pct": sentiment_data.get("long_account_pct", 0),
-                        "e4_short_pct": sentiment_data.get("short_account_pct", 0),
-
-                        # Engine 5: Regime
-                        "e5_regime": s5.get("regime"),
-                        "e5_vol_phase": s5.get("vol_phase"),
-                        "e5_tradeable": s5.get("tradeable", True),
-
-                        # Weights
-                        "weight_e1": s5.get("weight_overrides", {}).get("e1", 0.35),
-                        "weight_e2": s5.get("weight_overrides", {}).get("e2", 0.25),
-                        "weight_e3": s5.get("weight_overrides", {}).get("e3", 0.20),
-                        "weight_e4": s5.get("weight_overrides", {}).get("e4", 0.12),
-                    }))
-
-                    if dec["action"] == "NO_TRADE":
-                        reason = dec.get("reason", "Wait")
-                        if not ticks: reason = "No Ticks"
-                        elif not ob.get("bids"): reason = "No Orderbook"
-                        
-                        # === LOG REJECTED SIGNAL (Non-blocking) ===
-                        asyncio.create_task(self.storage.save_rejected_signal({
+                    # === SUPABASE LOGGING (STRICTLY ON TRADE ONLY) ===
+                    # บันทึกข้อมูลลง Database เฉพาะเมื่อมีการตัดสินใจเทรด (LONG/SHORT) เท่านั้น
+                    # เพื่อป้องกันการเซฟข้อมูลถี่เกินไป (เดิมเซฟทุก 150ms)
+                    if dec["action"] != "NO_TRADE":
+                        # 1. Save Signal Snapshot (บันทึกข้อมูล indicator ที่ทำให้ตัดสินใจเทรด)
+                        asyncio.create_task(self.storage.save_signal_snapshot({
                             "symbol": raw_sym,
-                            "rejection_reason": reason,
-                            "rejection_stage": "DecisionEngine",
-                            "would_be_action": "LONG" if dec.get("final_score", 0) > 0 else "SHORT",
-                            "would_be_score": dec.get("final_score", 0),
-                            "vpin": s1.get("vpin", 0),
-                            "ofi_velocity": s1.get("ofi_velocity", 0),
-                            "alignment": s2.get("alignment", 0),
-                            "agreements": sum(1 for d in [s1.get('direction'), s2.get('direction'), s3.get('direction'), s4.get('direction')] if d is not None and d != 'NEUTRAL'),
+                            "action": dec["action"],
+                            "reason": dec.get("reason", ""),
+                            "final_score": dec.get("final_score", 0),
+                            "confidence": dec.get("confidence", 0),
+                            "strategy": dec.get("strategy", ""),
                             "current_price": price,
-                            "regime": s5.get("regime"),
-                            "vol_phase": s5.get("vol_phase")
+                            "atr": s3.get("atr", 0),
+
+                            # Engine Data
+                            "e1_direction": s1.get("direction"),
+                            "e1_strength": s1.get("strength"),
+                            "e1_conviction": s1.get("conviction"),
+                            "e1_imbalance": s1.get("imbalance"),
+                            "e1_imbalance_l5": s1.get("depth_imbalance", {}).get("imbalance_L5"),
+                            "e1_imbalance_l10": s1.get("depth_imbalance", {}).get("imbalance_L10"),
+                            "e1_imbalance_l20": s1.get("depth_imbalance", {}).get("imbalance_L20"),
+                            "e1_ofi_velocity": s1.get("ofi_velocity", 0),
+                            "e1_vpin": s1.get("vpin", 0),
+                            "e1_micro_price": s1.get("micro_price"),
+
+                            "e2_direction": s2.get("direction"),
+                            "e2_strength": s2.get("strength"),
+                            "e2_aggressor_ratio": s2.get("aggressor_ratio"),
+                            "e2_aggressor_1s": s2.get("aggressor_1s"),
+                            "e2_aggressor_5s": s2.get("aggressor_5s"),
+                            "e2_aggressor_15s": s2.get("aggressor_15s"),
+                            "e2_alignment": s2.get("alignment", 0),
+                            "e2_velocity_ratio": s2.get("velocity_ratio"),
+
+                            "e3_direction": s3.get("direction"),
+                            "e3_strength": s3.get("strength"),
+                            "e3_rsi": s3.get("rsi"),
+                            "e3_bb_zone": s3.get("bb_zone"),
+
+                            "e4_direction": s4.get("direction"),
+                            "e4_strength": s4.get("strength"),
+                            "e4_ls_ratio": sentiment_data.get("ls_ratio", 0),
+                            "e4_funding_rate": sentiment_data.get("funding_rate", 0),
+                            "e4_long_pct": sentiment_data.get("long_account_pct", 0),
+                            "e4_short_pct": sentiment_data.get("short_account_pct", 0),
+
+                            "e5_regime": s5.get("regime"),
+                            "e5_vol_phase": s5.get("vol_phase"),
+                            "weight_e1": s5.get("weight_overrides", {}).get("e1", 0.35),
+                            "weight_e2": s5.get("weight_overrides", {}).get("e2", 0.25),
+                            "weight_e3": s5.get("weight_overrides", {}).get("e3", 0.20),
+                            "weight_e4": s5.get("weight_overrides", {}).get("e4", 0.12),
                         }))
 
+                    if dec["action"] == "NO_TRADE":
                         regime_info = f"{s5.get('regime', 'UNK')}|{s5.get('vol_phase', 'UNK')}"
                         sent_info = f"{s4.get('direction', 'UNK')}"
-                        
-                        print(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | SNT: {sent_info} | SKIP: {reason}")
+                        print(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | SNT: {sent_info} | SKIP: {dec.get('reason', 'Wait')}")
                     else:
                         regime_info = f"{s5.get('regime', 'UNK')}|{s5.get('vol_phase', 'UNK')}"
                         print(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | Action: {dec['action']} | Strat: {dec['strategy']} | Score: {dec['final_score']:.2f} | Conf: {dec['confidence']:.1f}%")
