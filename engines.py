@@ -2,7 +2,67 @@ from utils import calculate_imbalance, calculate_rsi, calculate_atr, calculate_a
 from config import E1_IMBALANCE_THRESHOLD, E2_MOMENTUM_THRESHOLD, E4_FUNDING_RATE_THRESHOLD
 
 class Engine1OrderFlow:
-    def process(self, orderbook, ticks):
+    def __init__(self):
+        # Track imbalance history for velocity calculation
+        self.imbalance_history = {}  # {symbol: [(timestamp, imbalance), ...]}
+        self.max_history_size = 50  # Keep last 50 snapshots (~10 seconds at 200ms intervals)
+
+    def _update_imbalance_history(self, symbol, imbalance):
+        """Track imbalance over time to calculate velocity"""
+        import time
+        timestamp = time.time()
+
+        if symbol not in self.imbalance_history:
+            self.imbalance_history[symbol] = []
+
+        self.imbalance_history[symbol].append((timestamp, imbalance))
+
+        # Keep only recent history
+        if len(self.imbalance_history[symbol]) > self.max_history_size:
+            self.imbalance_history[symbol].pop(0)
+
+    def _calculate_ofi_velocity(self, symbol, window_seconds=0.3):
+        """
+        Calculate Order Flow Imbalance velocity (rate of change)
+
+        Research shows velocity is more predictive than static imbalance.
+        High velocity indicates momentum building → price likely to follow.
+
+        Args:
+            symbol: Trading pair symbol
+            window_seconds: Time window to calculate velocity (default 300ms)
+
+        Returns:
+            float: Velocity score (can be positive or negative)
+        """
+        if symbol not in self.imbalance_history or len(self.imbalance_history[symbol]) < 2:
+            return 0.0
+
+        import time
+        current_time = time.time()
+        history = self.imbalance_history[symbol]
+
+        # Find data points within the window
+        cutoff_time = current_time - window_seconds
+        recent_points = [p for p in history if p[0] >= cutoff_time]
+
+        if len(recent_points) < 2:
+            return 0.0
+
+        # Calculate velocity: change in imbalance / time elapsed
+        oldest = recent_points[0]
+        newest = recent_points[-1]
+
+        time_delta = newest[0] - oldest[0]
+        if time_delta == 0:
+            return 0.0
+
+        imbalance_delta = newest[1] - oldest[1]
+        velocity = imbalance_delta / time_delta
+
+        return velocity
+
+    def process(self, orderbook, ticks, symbol="UNKNOWN"):
         bids = orderbook.get("bids", [])
         asks = orderbook.get("asks", [])
         if not bids or not asks:
@@ -12,6 +72,7 @@ class Engine1OrderFlow:
                 "conviction": None,
                 "imbalance": None,
                 "depth_imbalance": None,
+                "ofi_velocity": 0.0,
                 "cvd_slope": None,
                 "micro_price": None,
                 "vpin": 0.0
@@ -20,6 +81,10 @@ class Engine1OrderFlow:
         # Multi-level depth imbalance for better liquidity structure detection
         depth_data = calculate_depth_imbalance_multi(bids, asks)
         imbalance = depth_data['imbalance_weighted']  # Use weighted average as primary
+
+        # Update history and calculate OFI velocity (predictive!)
+        self._update_imbalance_history(symbol, imbalance)
+        ofi_velocity = self._calculate_ofi_velocity(symbol, window_seconds=0.3)
 
         # Calculate VPIN for predictive signal (0.5-2s ahead)
         vpin = calculate_vpin(ticks, volume_bucket_size=50, num_buckets=5)
@@ -32,6 +97,11 @@ class Engine1OrderFlow:
         conviction = abs(imbalance)
         if vpin > 0.5:  # High informed trading activity
             conviction = min(1.0, conviction * 1.3)  # 30% boost
+
+        # Boost conviction if OFI velocity is high (momentum building)
+        # Velocity > 2.0 means imbalance changing rapidly → price likely to follow
+        if abs(ofi_velocity) > 2.0:
+            conviction = min(1.0, conviction * 1.25)  # 25% boost
 
         # Additional conviction boost if all depth levels align
         if abs(depth_data['imbalance_L5']) > E1_IMBALANCE_THRESHOLD and \
@@ -46,6 +116,7 @@ class Engine1OrderFlow:
             "conviction": conviction,
             "imbalance": imbalance,
             "depth_imbalance": depth_data,  # Full depth structure for analysis
+            "ofi_velocity": ofi_velocity,  # Rate of change of imbalance
             "cvd_slope": 0,
             "micro_price": (float(bids[0][0])*float(asks[0][1]) + float(asks[0][0])*float(bids[0][1]))/(float(bids[0][1])+float(asks[0][1])) if bids and asks else 0,
             "vpin": vpin
