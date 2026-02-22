@@ -1,7 +1,7 @@
 import logging
 import json
 import ccxt.async_support as ccxt
-from config import BASE_BALANCE, RISK_PER_TRADE, MIN_LEVERAGE, MAX_LEVERAGE, API_KEY, SECRET_KEY, EXCHANGE_TAKER_FEE, SLIPPAGE_BUFFER, MIN_RR_RATIO, STRAT_MIN_SCORE, STRAT_AGREEMENT_REQ
+from config import BASE_BALANCE, RISK_PER_TRADE, MIN_LEVERAGE, MAX_LEVERAGE, API_KEY, SECRET_KEY, EXCHANGE_TAKER_FEE, SLIPPAGE_BUFFER, MIN_RR_RATIO, STRAT_MIN_SCORE, STRAT_AGREEMENT_REQ, DECISION_VPIN_MIN, DECISION_OFI_VELOCITY_MIN, DECISION_ALIGNMENT_MIN
 from strategies import StrategyA, StrategyB, StrategyC
 from logger_config import get_logger
 
@@ -48,18 +48,18 @@ class DecisionEngine:
 
         # VPIN Filter: Require informed trading activity
         # Research shows VPIN > 0.4 indicates informed traders active
-        if vpin < 0.35:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low VPIN ({vpin:.2f}) - no informed trading detected"}
+        if vpin < DECISION_VPIN_MIN:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low VPIN ({vpin:.2f} < {DECISION_VPIN_MIN}) - no informed trading detected"}
 
         # OFI Velocity Filter: Require momentum building
         # |velocity| > 1.5 indicates orderbook imbalance accelerating
-        if abs(ofi_velocity) < 1.5:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low OFI velocity ({ofi_velocity:.2f}) - momentum not building"}
+        if abs(ofi_velocity) < DECISION_OFI_VELOCITY_MIN:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low OFI velocity ({ofi_velocity:.2f} < {DECISION_OFI_VELOCITY_MIN}) - momentum not building"}
 
         # Multi-timeframe Alignment Filter: Require consensus
         # Alignment > 0.4 means 1s, 5s, 15s windows agree on direction
-        if alignment < 0.35:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low momentum alignment ({alignment:.2f}) - timeframes disagree"}
+        if alignment < DECISION_ALIGNMENT_MIN:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low momentum alignment ({alignment:.2f} < {DECISION_ALIGNMENT_MIN}) - timeframes disagree"}
 
         # === END PREDICTIVE FILTERS ===
 
