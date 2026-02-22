@@ -1,10 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::Utc;
 use polars::prelude::*;
 use reqwest::Client;
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tokio::time::{sleep, Duration};
 
 #[derive(Debug, Deserialize)]
 struct BinanceAggTrade {
@@ -27,18 +28,21 @@ async fn main() -> Result<()> {
     println!("Loading .env from: {:?}", env_path);
     dotenvy::from_path(env_path).ok();
 
-    // 2. Get Trading Pairs
+    // 2. Get Trading Pairs & URL
     let trading_pairs_str = std::env::var("TRADING_PAIRS").unwrap_or_else(|_| "BTCUSDT".to_string());
     let symbols: Vec<&str> = trading_pairs_str.split(',').collect();
     
+    let base_url = std::env::var("BINANCE_FUTURES_REST_URL")
+        .unwrap_or_else(|_| "https://fapi.binance.com".to_string());
+    
     // 3. Setup Config
-    let base_url = "https://fapi.binance.com";
     let client = Client::new();
-    let duration_hours = 24; // Download last 24 hours of data
+    let duration_hours = 6; // Download last 6 hours for test (it's faster and less likely to hit limit)
     let end_time = Utc::now().timestamp_millis();
     let start_time = end_time - (duration_hours * 3600 * 1000);
 
     println!("Target Symbols: {:?}", symbols);
+    println!("Base URL: {}", base_url);
     println!("Fetching last {} hours of data...", duration_hours);
 
     for symbol in symbols {
@@ -47,21 +51,18 @@ async fn main() -> Result<()> {
 
         println!("--- Processing {} ---", symbol);
         
-        // Create directory
         let dir_path = PathBuf::from("data").join(symbol);
         fs::create_dir_all(&dir_path)?;
 
-        let trades = download_agg_trades(&client, base_url, symbol, start_time, end_time).await?;
+        let trades = download_agg_trades(&client, &base_url, symbol, start_time, end_time).await?;
         
         if trades.is_empty() {
             println!("No trades found for {}", symbol);
             continue;
         }
 
-        // Convert to Polars DataFrame
         let mut df = trades_to_dataframe(trades)?;
         
-        // Save as Parquet
         let file_name = format!("{}_{}.parquet", symbol, Utc::now().format("%Y%m%d_%H%M%S"));
         let file_path = dir_path.join(file_name);
         
@@ -83,7 +84,7 @@ async fn download_agg_trades(
 ) -> Result<Vec<BinanceAggTrade>> {
     let mut all_trades = Vec::new();
     let mut current_start = start_time;
-    const BATCH_TIME: i64 = 60 * 60 * 1000; // 1 hour per batch
+    const BATCH_TIME: i64 = 15 * 60 * 1000; // 15 minutes per batch
 
     while current_start < end_time {
         let batch_end = std::cmp::min(current_start + BATCH_TIME, end_time);
@@ -94,8 +95,15 @@ async fn download_agg_trades(
         );
 
         let response = client.get(&url).send().await?;
+        
+        if response.status() == 429 {
+            println!("\n  [!] Rate limited (429). Sleeping for 10 seconds...");
+            sleep(Duration::from_secs(10)).await;
+            continue;
+        }
+
         if !response.status().is_success() {
-            println!("  [!] Error fetching {} at {}: {}", symbol, current_start, response.status());
+            println!("\n  [!] Error fetching {} at {}: {}", symbol, current_start, response.status());
             current_start = batch_end;
             continue;
         }
@@ -108,6 +116,7 @@ async fn download_agg_trades(
             all_trades.extend(trades);
             
             if count == 1000 {
+                // If we got max results, resume from the last trade time
                 current_start = last_time + 1;
             } else {
                 current_start = batch_end;
@@ -120,7 +129,8 @@ async fn download_agg_trades(
         use std::io::Write;
         std::io::stdout().flush().ok();
         
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        // Politeness delay
+        sleep(Duration::from_millis(250)).await;
     }
     println!();
 
