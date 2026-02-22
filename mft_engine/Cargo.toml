@@ -1,0 +1,66 @@
+[package]
+name = "mft_engine"
+version = "0.1.0"
+edition = "2021"
+description = "MFT Quantitative Engine: GARCH(1,1) + Ornstein-Uhlenbeck + OFI/VPIN, Binance Futures"
+
+[[bin]]
+name = "backtest"
+path = "src/main.rs"
+
+[[bin]]
+name = "live_trader"
+path = "src/live_main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client for Binance REST API
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Statistical distributions: Normal CDF (Φ), PDF, inverse CDF
+statrs = "0.17"
+
+# N-dimensional arrays for matrix / linear algebra
+ndarray = "0.16"
+
+# Data storage / Parquet I/O
+polars = { version = "0.46", features = ["parquet", "csv", "lazy"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Environment variables / .env loading
+dotenv = "0.15"
+
+# Structured logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# HMAC-SHA256 for Binance signed requests
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+
+# Parallel iteration (parameter sweeps in backtesting)
+rayon = "1.10"
+
+# Fast HashMap
+ahash = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1
