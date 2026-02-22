@@ -3,6 +3,18 @@ name = "rust_backtest"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "simple_backtest"
+path = "src/main.rs"
+
+[[bin]]
+name = "complete_backtest"
+path = "src/main_complete.rs"
+
+[[bin]]
+name = "complete_backtest_fixed"
+path = "src/main_complete_fixed.rs"
+
 [dependencies]
 nautilus-backtest = "0.53.0"
 nautilus-execution = "0.53.0"
