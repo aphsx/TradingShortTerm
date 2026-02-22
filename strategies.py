@@ -9,16 +9,16 @@ class StrategyA:
         s_rat = e2.get('spike_ratio') or 0
         str1 = e1.get('strength') or 0
         
-        # TRIGGER
-        if not ((v_rat > 2.0 and streak >= 8 and v_spike) or s_rat > 2.5):
+        # TRIGGER - Reduced strictness for short-term scalping
+        if not ((v_rat > 1.5 and streak >= 5 and v_spike) or s_rat > 1.8):
             return 0
             
         score = 0.0
         score += 0.4 # Base qualifying
         
-        if v_rat > 2.0: score += 0.4
-        if streak >= 8: score += 0.3
-        if str1 > 0.60: score += 0.2
+        if v_rat > 1.5: score += 0.4
+        if streak >= 6: score += 0.3
+        if str1 > 0.40: score += 0.2
         
         regime = e5_filter.get('regime', '')
         if regime == "TRENDING": score += 0.1
@@ -38,16 +38,16 @@ class StrategyB:
         if rsi is None or bb_zone is None:
             return 0
             
-        # TRIGGER
-        if not ((rsi < 25 or rsi > 75) and bb_zone in ["UPPER", "LOWER"]):
+        # TRIGGER - Expanded RSI zones for rapid mean reversion 
+        if not ((rsi < 35 or rsi > 65) and bb_zone in ["UPPER", "LOWER"]):
             return 0
             
         score = 0.0
         score += 0.4 # Base qualifying
         
-        if rsi < 25 or rsi > 75: score += 0.4
+        if rsi < 30 or rsi > 70: score += 0.4
         if bb_zone in ["UPPER", "LOWER"]: score += 0.3
-        if str1 > 0.40: score += 0.2
+        if str1 > 0.30: score += 0.2
         
         phase = e5_filter.get('regime', '')
         if phase == "RANGING": score += 0.1
@@ -64,16 +64,16 @@ class StrategyC:
         v_spike = e2.get('volume_spike') or False
         s_rat = e2.get('spike_ratio') or 0
         
-        # TRIGGER
-        if not (liq > 0.70 and (v_spike or s_rat > 2.0)):
+        # TRIGGER - Lowered liquidation proxy requirement
+        if not (liq > 0.40 and (v_spike or s_rat > 1.5)):
             return 0
             
         score = 0.0
         score += 0.4 # Base qualifying
         
-        if liq > 0.70: score += 0.5
-        if s_rat > 2.0: score += 0.3
+        if liq > 0.40: score += 0.5
+        if s_rat > 1.5: score += 0.3
         
-        if liq > 0.90: score += 0.2 
+        if liq > 0.60: score += 0.2 
         
         return max(0, score)

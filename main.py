@@ -70,7 +70,7 @@ class VortexBot:
         
         # Pre-fetch historical candles to bootstrap indicator math
         try:
-            hist = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=500)
+            hist = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=96)
             self.storage.set_klines(raw_sym, timeframe, hist)
         except Exception as e:
             print(f"Prefetch Kline Error for {symbol}: {e}")
@@ -84,7 +84,7 @@ class VortexBot:
                 for k in new_klines:
                     curr_dict[k[0]] = k
                     
-                merged = sorted(curr_dict.values(), key=lambda x: x[0])[-500:]
+                merged = sorted(curr_dict.values(), key=lambda x: x[0])[-96:]
                 self.storage.set_klines(raw_sym, timeframe, merged)
             except asyncio.CancelledError:
                 break

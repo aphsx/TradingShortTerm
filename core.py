@@ -42,16 +42,17 @@ class DecisionEngine:
         if not e5_filter.get('tradeable', True) or not e5_filter.get('spread_ok', True):
             return {"action": "NO_TRADE", "final_score": final_score, "reason": "E5 Filter: Not tradeable or spread too high"}
             
-        if abs(final_score) < 0.45:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Final score {abs(final_score):.2f} < 0.45"}
+        # Reduced strictness for short-term active scalping
+        if abs(final_score) < 0.25:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Final score {abs(final_score):.2f} < 0.25"}
             
         action = "LONG" if final_score > 0 else "SHORT"
         action_val = 1 if action == "LONG" else -1
         
-        # Agreement Check
+        # Agreement Check: Reduced to 2 for aggressive short-term trading
         agreements = sum(1 for d in [d1, d2, d3, d4] if d == action_val)
-        if agreements < 3:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Only {agreements} engines agree (need 3)"}
+        if agreements < 2:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Only {agreements} engines agree (need 2 for scalping)"}
             
         # E1 Check
         if d1 == -action_val:
@@ -85,8 +86,8 @@ class RiskManager:
         strategy = decision.get("strategy", "A")
         
         risk_pct = RISK_PER_TRADE
-        if confidence >= 80: risk_pct = 0.015
-        elif confidence >= 60: risk_pct = 0.010
+        if confidence >= 80: risk_pct = 0.020 # Aggressive short term sizing
+        elif confidence >= 60: risk_pct = 0.012
         else: risk_pct = 0.005
         
         risk_amount = BASE_BALANCE * risk_pct

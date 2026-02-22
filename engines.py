@@ -213,21 +213,22 @@ class Engine5Regime:
         spread_proxy_pct = (highs[-1] - lows[-1]) / current_price if current_price else 0
         spread_ok = spread_proxy_pct < 0.002 # Assume spread is ok if 3m range isn't inexplicably vast
         
+        # Removed CHOPPY from the hardware trade-block for short term scalping
         tradeable = True
-        if regime == "CHOPPY" or vol_phase == "EXTREME_VOL":
+        if vol_phase == "EXTREME_VOL":
             tradeable = False
             
         # 4. Dynamic Weight Setup
         weights = {"e1": 0.35, "e2": 0.25, "e3": 0.20, "e4": 0.12}
-        params = {"tp_multiplier": 1.0, "sl_multiplier": 1.0, "leverage_max": 12}
+        params = {"tp_multiplier": 0.8, "sl_multiplier": 1.0, "leverage_max": 20} # Aggressive short-term scalping params
         
         if regime == "TRENDING":
             weights = {"e1": 0.40, "e2": 0.30, "e3": 0.10, "e4": 0.10} # Favor momentum
-            params["tp_multiplier"] = 1.5 # Let winners run
+            params["tp_multiplier"] = 1.0 # Let winners run a bit more
             
-        elif regime == "RANGING":
-            weights = {"e1": 0.20, "e2": 0.20, "e3": 0.40, "e4": 0.15} # Favor oscillators
-            params["tp_multiplier"] = 0.8 # Take quick profits
+        elif regime == "RANGING" or regime == "CHOPPY":
+            weights = {"e1": 0.15, "e2": 0.25, "e3": 0.45, "e4": 0.15} # Favor oscillators heavily for mean reversion
+            params["tp_multiplier"] = 0.5 # Take very quick profits
             
         if vol_phase == "HIGH_VOL":
             params["sl_multiplier"] = 1.5 # Widen SL to avoid wicks
