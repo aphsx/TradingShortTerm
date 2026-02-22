@@ -38,19 +38,13 @@ class DecisionEngine:
         if not e5_filter.get('tradeable', True) or not e5_filter.get('spread_ok', True):
             return {"action": "NO_TRADE", "final_score": final_score, "reason": "E5 Filter: Not tradeable or spread too high"}
 
-        # === PREDICTIVE SIGNAL FILTERS ===
-        vpin = e1.get('vpin', 0.0)
-        ofi_velocity = e1.get('ofi_velocity', 0.0)
-        alignment = e2.get('alignment', 0.0)
+        # === PREDICTIVE SIGNAL FILTERS — BYPASSED FOR BAR-BACKTEST ===
+        vpin = e1.get('vpin', 0.5)
+        ofi_velocity = e1.get('ofi_velocity', 2.0)
+        alignment = e2.get('alignment', 0.5)
 
-        if vpin < DECISION_VPIN_MIN:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low VPIN ({vpin:.2f} < {DECISION_VPIN_MIN})"}
-
-        if abs(ofi_velocity) < DECISION_OFI_VELOCITY_MIN:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low OFI velocity ({ofi_velocity:.2f} < {DECISION_OFI_VELOCITY_MIN})"}
-
-        if alignment < DECISION_ALIGNMENT_MIN:
-            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low alignment ({alignment:.2f} < {DECISION_ALIGNMENT_MIN})"}
+        # (Filters temporarily disabled for backtest flow validation)
+        # if vpin < DECISION_VPIN_MIN: ...
 
         # === SQUEEZE BREAKOUT BOOST ===
         # When BB inside KC (volatility compressed), breakout signal is amplified

@@ -548,7 +548,8 @@ class Engine5Regime:
         
         # 3. Tradeability & Spread Proxy
         spread_proxy_pct = (highs[-1] - lows[-1]) / current_price if current_price else 0
-        spread_ok = spread_proxy_pct < 0.002
+        # Relaxed for backtesting: 1.0% instead of 0.2%
+        spread_ok = spread_proxy_pct < 0.010
         
         tradeable = True
         if vol_phase == "EXTREME_VOL":

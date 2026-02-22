@@ -3,6 +3,7 @@ import pandas as pd
 import time
 from datetime import datetime, timedelta
 import os
+from config import TRADING_PAIRS
 
 def download_historical_data(symbol='BTC/USDT', timeframe='1m', days=30):
     """
@@ -43,7 +44,8 @@ def download_historical_data(symbol='BTC/USDT', timeframe='1m', days=30):
     df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     
     # Save to CSV in the integration folder
-    filename = f"nautilus_integration/data_{symbol.replace('/', '')}_{timeframe}_{days}d.csv"
+    filename = f"tests/nautilus_integration/data_{symbol.replace('/', '')}_{timeframe}_{days}d.csv"
+
     df.to_csv(filename, index=False)
     
     print(f"--- Download Complete! ---")
@@ -52,8 +54,11 @@ def download_historical_data(symbol='BTC/USDT', timeframe='1m', days=30):
     return filename
 
 if __name__ == "__main__":
-    # Create the folder if it doesn't exist (just in case)
-    if not os.path.exists('nautilus_integration'):
-        os.makedirs('nautilus_integration')
+    folder = 'tests/nautilus_integration'
+    if not os.path.exists(folder):
+        os.makedirs(folder)
         
-    download_historical_data(symbol='BTC/USDT', timeframe='1m', days=30)
+    for pair in TRADING_PAIRS:
+        # pair is BTCUSDT, needs to be BTC/USDT
+        symbol = f"{pair[:-4]}/{pair[-4:]}"
+        download_historical_data(symbol=symbol, timeframe='1m', days=30)
