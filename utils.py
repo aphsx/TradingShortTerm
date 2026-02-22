@@ -124,3 +124,55 @@ def calculate_percentiles(data_list, percentiles=[20, 80, 95]):
     if not data_list or len(data_list) < 5:
         return {p: 0 for p in percentiles}
     return {p: np.percentile(data_list, p) for p in percentiles}
+
+def calculate_vpin(ticks, volume_bucket_size=50, num_buckets=5):
+    """
+    Calculate VPIN (Volume-Synchronized Probability of Informed Trading)
+
+    Research shows VPIN can predict price jumps 0.5-2 seconds in advance.
+    Instead of time-based windows, uses volume-based buckets.
+
+    Args:
+        ticks: List of tick data [{'q': quantity, 'm': is_buyer_maker}, ...]
+        volume_bucket_size: Volume threshold for each bucket (default 50 for crypto)
+        num_buckets: Number of buckets to average (default 5)
+
+    Returns:
+        float: VPIN score (0-1), higher = more informed trading = potential price jump
+    """
+    if not ticks or len(ticks) < 10:
+        return 0.0
+
+    buckets = []
+    current_bucket = {'buy': 0.0, 'sell': 0.0, 'total': 0.0}
+
+    # Process ticks from newest to oldest
+    for tick in ticks:
+        qty = float(tick.get('q', 0))
+        is_sell = tick.get('m', False)  # m=True means buyer is maker (i.e., sell aggressor)
+
+        if is_sell:
+            current_bucket['sell'] += qty
+        else:
+            current_bucket['buy'] += qty
+
+        current_bucket['total'] += qty
+
+        # When bucket reaches target volume, calculate VPIN for this bucket
+        if current_bucket['total'] >= volume_bucket_size:
+            if current_bucket['total'] > 0:
+                bucket_vpin = abs(current_bucket['buy'] - current_bucket['sell']) / current_bucket['total']
+                buckets.append(bucket_vpin)
+
+            # Reset for next bucket
+            current_bucket = {'buy': 0.0, 'sell': 0.0, 'total': 0.0}
+
+            # Stop when we have enough buckets
+            if len(buckets) >= num_buckets:
+                break
+
+    # Return average VPIN across buckets
+    if not buckets:
+        return 0.0
+
+    return np.mean(buckets)

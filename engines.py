@@ -1,4 +1,4 @@
-from utils import calculate_imbalance, calculate_rsi, calculate_atr, calculate_atr_array, calculate_bollinger_bands, calculate_adx, calculate_percentiles
+from utils import calculate_imbalance, calculate_rsi, calculate_atr, calculate_atr_array, calculate_bollinger_bands, calculate_adx, calculate_percentiles, calculate_vpin
 from config import E1_IMBALANCE_THRESHOLD, E2_MOMENTUM_THRESHOLD, E4_FUNDING_RATE_THRESHOLD
 
 class Engine1OrderFlow:
@@ -12,22 +12,32 @@ class Engine1OrderFlow:
                 "conviction": None,
                 "imbalance": None,
                 "cvd_slope": None,
-                "micro_price": None
+                "micro_price": None,
+                "vpin": 0.0
             }
-            
+
         imbalance = calculate_imbalance(bids, asks)
-        
+
+        # Calculate VPIN for predictive signal (0.5-2s ahead)
+        vpin = calculate_vpin(ticks, volume_bucket_size=50, num_buckets=5)
+
         direction = "NEUTRAL"
         if imbalance > E1_IMBALANCE_THRESHOLD: direction = "BUY_PRESSURE" # Aggressively catch micro liquidity imbalances
         elif imbalance < -E1_IMBALANCE_THRESHOLD: direction = "SELL_PRESSURE"
-        
+
+        # Boost conviction if VPIN is high (informed trading detected)
+        conviction = abs(imbalance)
+        if vpin > 0.5:  # High informed trading activity
+            conviction = min(1.0, conviction * 1.3)  # 30% boost
+
         return {
             "direction": direction,
             "strength": abs(imbalance),
-            "conviction": abs(imbalance),
+            "conviction": conviction,
             "imbalance": imbalance,
             "cvd_slope": 0,
-            "micro_price": (float(bids[0][0])*float(asks[0][1]) + float(asks[0][0])*float(bids[0][1]))/(float(bids[0][1])+float(asks[0][1])) if bids and asks else 0
+            "micro_price": (float(bids[0][0])*float(asks[0][1]) + float(asks[0][0])*float(bids[0][1]))/(float(bids[0][1])+float(asks[0][1])) if bids and asks else 0,
+            "vpin": vpin
         }
 
 class Engine2Tick:
