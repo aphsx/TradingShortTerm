@@ -165,7 +165,7 @@ class VortexBot:
                     sentiment_data = self.storage.get_sentiment(raw_sym)
                         
                     s1 = self.e1.process(ob, ticks, symbol=raw_sym)
-                    s2 = self.e2.process(ticks)
+                    s2 = self.e2.process(ticks, symbol=raw_sym)
                     s3 = self.e3.process(klines_1m)
                     s4 = self.e4.process(sentiment_data)
                     s5 = self.e5.process(klines_15m)

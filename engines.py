@@ -123,31 +123,126 @@ class Engine1OrderFlow:
         }
 
 class Engine2Tick:
-    def process(self, ticks):
+    def __init__(self):
+        # Track tick history for multi-timeframe analysis
+        self.tick_history = {}  # {symbol: [(timestamp, tick_data), ...]}
+        self.max_history_seconds = 20  # Keep 20 seconds of history
+
+    def _update_tick_history(self, symbol, ticks):
+        """Store ticks with timestamps for multi-timeframe analysis"""
+        import time
+        current_time = time.time()
+
+        if symbol not in self.tick_history:
+            self.tick_history[symbol] = []
+
+        # Add new ticks with timestamps
+        for tick in ticks:
+            self.tick_history[symbol].append((current_time, tick))
+
+        # Clean old data
+        cutoff = current_time - self.max_history_seconds
+        self.tick_history[symbol] = [
+            (ts, t) for ts, t in self.tick_history[symbol] if ts >= cutoff
+        ]
+
+    def _calculate_aggressor_ratio(self, ticks):
+        """Calculate buy/sell aggressor ratio from tick data"""
+        if not ticks:
+            return 0.5
+
+        buy_vol = sum(float(t.get('q', 0)) for t in ticks if not t.get('m', False))
+        sell_vol = sum(float(t.get('q', 0)) for t in ticks if t.get('m', False))
+
+        return buy_vol / (buy_vol + sell_vol) if (buy_vol + sell_vol) > 0 else 0.5
+
+    def _get_ticks_in_window(self, symbol, window_seconds):
+        """Get ticks within specified time window"""
+        if symbol not in self.tick_history:
+            return []
+
+        import time
+        cutoff = time.time() - window_seconds
+        return [t for ts, t in self.tick_history[symbol] if ts >= cutoff]
+
+    def _calculate_alignment_score(self, ratios):
+        """
+        Calculate how aligned multiple timeframes are.
+
+        When all timeframes show the same direction (all > 0.55 or all < 0.45),
+        it indicates strong, building momentum.
+
+        Args:
+            ratios: List of aggressor ratios from different timeframes
+
+        Returns:
+            float: Alignment score (0-1), 1 = perfect alignment
+        """
+        if not ratios or len(ratios) < 2:
+            return 0.0
+
+        # Check if all bullish (> 0.55) or all bearish (< 0.45)
+        all_bullish = all(r > 0.55 for r in ratios)
+        all_bearish = all(r < 0.45 for r in ratios)
+
+        if all_bullish or all_bearish:
+            # Calculate how far from neutral (0.5) on average
+            avg_deviation = sum(abs(r - 0.5) for r in ratios) / len(ratios)
+            return min(1.0, avg_deviation * 2)  # Scale to 0-1
+
+        return 0.0
+
+    def process(self, ticks, symbol="UNKNOWN"):
         if not ticks:
             return {
-                "direction": None, 
-                "strength": None, 
-                "velocity_ratio": None, 
+                "direction": None,
+                "strength": None,
+                "velocity_ratio": None,
                 "aggressor_ratio": None,
-                "streak": None, 
+                "aggressor_1s": None,
+                "aggressor_5s": None,
+                "aggressor_15s": None,
+                "alignment": 0.0,
+                "streak": None,
                 "volume_spike": None,
                 "spike_ratio": None
             }
-        buy_vol = sum(float(t.get('q', 0)) for t in ticks if not t.get('m', False))
-        sell_vol = sum(float(t.get('q', 0)) for t in ticks if t.get('m', False))
-        
-        aggressor_ratio = buy_vol / (buy_vol + sell_vol) if (buy_vol + sell_vol) > 0 else 0.5
-        
+
+        # Update history for multi-timeframe analysis
+        self._update_tick_history(symbol, ticks)
+
+        # Calculate aggressor ratios at multiple timeframes
+        ticks_1s = self._get_ticks_in_window(symbol, window_seconds=1)
+        ticks_5s = self._get_ticks_in_window(symbol, window_seconds=5)
+        ticks_15s = self._get_ticks_in_window(symbol, window_seconds=15)
+
+        aggressor_1s = self._calculate_aggressor_ratio(ticks_1s)
+        aggressor_5s = self._calculate_aggressor_ratio(ticks_5s)
+        aggressor_15s = self._calculate_aggressor_ratio(ticks_15s)
+
+        # Use 5s window as primary (balanced between noise and lag)
+        aggressor_ratio = aggressor_5s
+
+        # Calculate alignment across timeframes
+        alignment = self._calculate_alignment_score([aggressor_1s, aggressor_5s, aggressor_15s])
+
         direction = "NEUTRAL"
-        if aggressor_ratio > E2_MOMENTUM_THRESHOLD: direction = "MOMENTUM_LONG" # Hair-trigger momentum
+        if aggressor_ratio > E2_MOMENTUM_THRESHOLD: direction = "MOMENTUM_LONG"
         elif aggressor_ratio < (1.0 - E2_MOMENTUM_THRESHOLD): direction = "MOMENTUM_SHORT"
-        
+
+        # Strength boosted by alignment
+        base_strength = abs(aggressor_ratio - 0.5) * 2
+        strength = min(1.0, base_strength * (1 + alignment * 0.5))  # Up to 50% boost
+
         return {
             "direction": direction,
-            "strength": abs(aggressor_ratio - 0.5) * 2,
+            "strength": strength,
             "velocity_ratio": 1.5,
             "aggressor_ratio": aggressor_ratio,
+            "aggressor_1s": aggressor_1s,
+            "aggressor_5s": aggressor_5s,
+            "aggressor_15s": aggressor_15s,
+            "alignment": alignment,  # High alignment = strong momentum
             "streak": 5,
             "volume_spike": False,
             "spike_ratio": 1.0
