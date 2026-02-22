@@ -18,42 +18,67 @@ class DecisionEngine:
         w2 = e5_filter.get('weight_overrides', {}).get('e2', 0.25)
         w3 = e5_filter.get('weight_overrides', {}).get('e3', 0.20)
         w4 = e5_filter.get('weight_overrides', {}).get('e4', 0.12)
-        
+
         e1, e2, e3, e4 = signals.get('e1', {}), signals.get('e2', {}), signals.get('e3', {}), signals.get('e4', {})
-        
+
         def get_dir_val(d):
             if not d: return 0
             if d.upper() in ["BUY_PRESSURE", "MOMENTUM_LONG", "LONG", "CROWD_SHORT"]: return 1
             if d.upper() in ["SELL_PRESSURE", "MOMENTUM_SHORT", "SHORT", "CROWD_LONG"]: return -1
             return 0
-            
+
         d1 = get_dir_val(e1.get('direction'))
         d2 = get_dir_val(e2.get('direction'))
         d3 = get_dir_val(e3.get('direction'))
         d4 = get_dir_val(e4.get('direction'))
-        
+
         s1 = d1 * (e1.get('strength') or 0) * (e1.get('conviction') or 1.0)
         s2 = d2 * (e2.get('strength') or 0)
         s3 = d3 * (e3.get('strength') or 0)
         s4 = d4 * (e4.get('strength') or 0)
-        
+
         final_score = s1*w1 + s2*w2 + s3*w3 + s4*w4
-        
+
         if not e5_filter.get('tradeable', True) or not e5_filter.get('spread_ok', True):
             return {"action": "NO_TRADE", "final_score": final_score, "reason": "E5 Filter: Not tradeable or spread too high"}
-            
+
+        # === PREDICTIVE SIGNAL FILTERS (High-Latency Optimization) ===
+        # For 30-80ms latency environments, we need leading indicators
+        # that predict price movement 0.5-2 seconds ahead
+
+        vpin = e1.get('vpin', 0.0)
+        ofi_velocity = e1.get('ofi_velocity', 0.0)
+        alignment = e2.get('alignment', 0.0)
+
+        # VPIN Filter: Require informed trading activity
+        # Research shows VPIN > 0.4 indicates informed traders active
+        if vpin < 0.35:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low VPIN ({vpin:.2f}) - no informed trading detected"}
+
+        # OFI Velocity Filter: Require momentum building
+        # |velocity| > 1.5 indicates orderbook imbalance accelerating
+        if abs(ofi_velocity) < 1.5:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low OFI velocity ({ofi_velocity:.2f}) - momentum not building"}
+
+        # Multi-timeframe Alignment Filter: Require consensus
+        # Alignment > 0.4 means 1s, 5s, 15s windows agree on direction
+        if alignment < 0.35:
+            return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Low momentum alignment ({alignment:.2f}) - timeframes disagree"}
+
+        # === END PREDICTIVE FILTERS ===
+
         # Reduced strictness for short-term active scalping (Dynamic)
         if abs(final_score) < STRAT_MIN_SCORE:
             return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Final score {abs(final_score):.2f} < {STRAT_MIN_SCORE} min"}
-            
+
         action = "LONG" if final_score > 0 else "SHORT"
         action_val = 1 if action == "LONG" else -1
-        
+
         # Agreement Check: Reduced for aggressive short-term trading (Dynamic)
         agreements = sum(1 for d in [d1, d2, d3, d4] if d == action_val)
         if agreements < STRAT_AGREEMENT_REQ:
             return {"action": "NO_TRADE", "final_score": final_score, "reason": f"Only {agreements} engines agree (need {STRAT_AGREEMENT_REQ} for scalping)"}
-            
+
         # E1 Check
         if d1 == -action_val:
             return {"action": "NO_TRADE", "final_score": final_score, "reason": "E1 (Primary) opposes the direction"}
