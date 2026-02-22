@@ -1,198 +1,240 @@
+"""
+Storage Layer — VORTEX-7 v2.0
+================================
+Hot  store : Redis  (orderbook, ticks, klines, positions, sentiment)
+Cold store : Supabase (trade_logs, rejected_signals)
+
+DB Write pattern (ALWAYS fire-and-forget in the caller):
+    asyncio.create_task(storage.log_trade_open(data))
+    asyncio.create_task(storage.log_trade_close(trade_id, data))
+    asyncio.create_task(storage.log_rejected(data))
+"""
+
 import redis
 import json
 import asyncio
 import logging
 from typing import Optional, Dict, Any
+
 from supabase import create_client, Client
 from config import REDIS_HOST, REDIS_PORT, SUPABASE_URL, SUPABASE_KEY
 
 logger = logging.getLogger(__name__)
 
+
 class DataStorage:
+    """Single entry point for all storage operations."""
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Init
+    # ──────────────────────────────────────────────────────────────────────────
+
     def __init__(self):
-        # Redis connection with validation
+        # ── Redis ─────────────────────────────────────────────────────────────
         try:
-            self.r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True, socket_connect_timeout=5)
-            self.r.ping()  # Test connection
+            self.r = redis.Redis(
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                decode_responses=True,
+                socket_connect_timeout=5,
+            )
+            self.r.ping()
             logger.info(f"✓ Redis connected: {REDIS_HOST}:{REDIS_PORT}")
         except redis.ConnectionError as e:
             logger.error(f"✗ Redis connection failed: {e}")
             raise ConnectionError(f"Cannot connect to Redis at {REDIS_HOST}:{REDIS_PORT}") from e
 
-        # Supabase connection with validation
+        # ── Supabase ──────────────────────────────────────────────────────────
         if SUPABASE_URL and SUPABASE_KEY:
             try:
-                self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-                # Test connection by querying a table
-                self.supabase.table("trades").select("*").limit(1).execute()
+                self.supabase: Optional[Client] = create_client(SUPABASE_URL, SUPABASE_KEY)
+                # Lightweight ping — just verify the table exists
+                self.supabase.table("trade_logs").select("id").limit(1).execute()
                 logger.info(f"✓ Supabase connected: {SUPABASE_URL}")
             except Exception as e:
                 logger.error(f"✗ Supabase connection failed: {e}")
-                raise ConnectionError(f"Cannot connect to Supabase at {SUPABASE_URL}") from e
+                raise ConnectionError(f"Cannot connect to Supabase: {e}") from e
         else:
             self.supabase = None
-            logger.warning("⚠ Supabase not configured - no trade data will be saved!")
+            logger.warning("⚠  Supabase not configured — no trades will be persisted!")
 
-        # Alert counters for monitoring
-        self.failed_saves = 0
-        self.max_failed_saves_before_alert = 5
-            
-    # --- Redis Hot Data ---
-    def get_position(self, symbol):
+        self._consecutive_failures = 0
+        self._MAX_FAILURES = 5
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Redis Hot Store
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def get_position(self, symbol: str) -> Optional[Dict]:
         data = self.r.hgetall(f"position:{symbol}")
         return data if data else None
-        
-    def set_position(self, symbol, data):
+
+    def set_position(self, symbol: str, data: Dict) -> None:
         self.r.hset(f"position:{symbol}", mapping=data)
-        
-    def delete_position(self, symbol):
+
+    def delete_position(self, symbol: str) -> None:
         self.r.delete(f"position:{symbol}")
-        
-    def add_tick(self, symbol, tick_data):
+
+    # ── Ticks (ring buffer, last 2 000 trades) ────────────────────────────────
+    def add_tick(self, symbol: str, tick_data: Dict) -> None:
         key = f"ticks:{symbol}"
         self.r.lpush(key, json.dumps(tick_data))
         self.r.ltrim(key, 0, 1999)
-        
-    def get_ticks(self, symbol, count=100):
-        ticks = self.r.lrange(f"ticks:{symbol}", 0, count-1)
+
+    def get_ticks(self, symbol: str, count: int = 100):
+        ticks = self.r.lrange(f"ticks:{symbol}", 0, count - 1)
         return [json.loads(t) for t in ticks]
-        
-    def set_orderbook(self, symbol, bids, asks):
-        self.r.hset(f"orderbook:{symbol}", mapping={
-            "bids": json.dumps(bids),
-            "asks": json.dumps(asks)
-        })
-        
-    def get_orderbook(self, symbol):
+
+    # ── Orderbook ─────────────────────────────────────────────────────────────
+    def set_orderbook(self, symbol: str, bids, asks) -> None:
+        self.r.hset(
+            f"orderbook:{symbol}",
+            mapping={"bids": json.dumps(bids), "asks": json.dumps(asks)},
+        )
+
+    def get_orderbook(self, symbol: str) -> Dict:
         ob = self.r.hgetall(f"orderbook:{symbol}")
         if not ob:
             return {"bids": [], "asks": []}
         return {
             "bids": json.loads(ob.get("bids", "[]")),
-            "asks": json.loads(ob.get("asks", "[]"))
+            "asks": json.loads(ob.get("asks", "[]")),
         }
 
-    def set_signals(self, symbol, engine_name, data):
+    # ── Engine Signals ────────────────────────────────────────────────────────
+    def set_signals(self, symbol: str, engine_name: str, data: Dict) -> None:
         self.r.hset(f"engine_signals:{symbol}", engine_name, json.dumps(data))
-        
-    def get_signals(self, symbol):
+
+    def get_signals(self, symbol: str) -> Dict:
         signals = self.r.hgetall(f"engine_signals:{symbol}")
         return {k: json.loads(v) for k, v in signals.items()}
 
-    def set_klines(self, symbol, timeframe, data):
+    # ── Klines ────────────────────────────────────────────────────────────────
+    def set_klines(self, symbol: str, timeframe: str, data) -> None:
         self.r.set(f"klines:{symbol}:{timeframe}", json.dumps(data))
-        
-    def get_klines(self, symbol, timeframe):
+
+    def get_klines(self, symbol: str, timeframe: str):
         v = self.r.get(f"klines:{symbol}:{timeframe}")
         return json.loads(v) if v else []
 
-    def set_sentiment(self, symbol, data):
+    # ── Sentiment ─────────────────────────────────────────────────────────────
+    def set_sentiment(self, symbol: str, data: Dict) -> None:
         self.r.hset(f"sentiment:{symbol}", mapping=data)
-        
-    def get_sentiment(self, symbol):
+
+    def get_sentiment(self, symbol: str) -> Dict:
         data = self.r.hgetall(f"sentiment:{symbol}")
-        # Convert strings back to floats
         return {k: float(v) for k, v in data.items()} if data else {}
 
-    async def _retry_with_backoff(self, func, *args, max_retries=3, **kwargs):
-        """Retry async function with exponential backoff"""
-        for attempt in range(max_retries):
-            try:
-                return await func(*args, **kwargs)
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    raise
-                wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
-                logger.warning(f"Retry {attempt + 1}/{max_retries} after {wait_time}s: {e}")
-                await asyncio.sleep(wait_time)
+    # ──────────────────────────────────────────────────────────────────────────
+    # Supabase Cold Store  (fire-and-forget — call via asyncio.create_task)
+    # ──────────────────────────────────────────────────────────────────────────
 
-    async def _alert_database_failure(self, operation: str, error: str, data: Dict[str, Any]):
-        """Alert on critical database failures"""
-        self.failed_saves += 1
-        logger.error(f"🚨 DATABASE FAILURE [{operation}]: {error}")
-        logger.error(f"Failed data: {json.dumps(data, default=str)[:200]}...")
-
-        if self.failed_saves >= self.max_failed_saves_before_alert:
-            logger.critical(f"🔥 CRITICAL: {self.failed_saves} consecutive DB save failures!")
-            # TODO: Send Telegram/email alert here
-            self.failed_saves = 0  # Reset counter after alert
-
-    # --- Supabase Cold Data ---
-    async def save_trade(self, trade_data):
-        """Save executed trade to database with retry logic (Non-blocking)"""
+    async def _sb_insert(self, table: str, payload: Dict[str, Any]) -> Optional[str]:
+        """
+        Insert one row into `table`.
+        Returns the generated UUID string on success, None on failure.
+        All exceptions are caught so the caller loop never dies.
+        """
         if not self.supabase:
-            logger.warning("⚠ Skipping save_trade - Supabase not configured")
-            return
-
+            return None
         try:
-            # Run blocking Supabase call in a separate thread with retry
-            await self._retry_with_backoff(
-                lambda: asyncio.to_thread(self.supabase.table("trades").insert(trade_data).execute),
-                max_retries=3
+            result = await asyncio.to_thread(
+                self.supabase.table(table).insert(payload).execute
             )
-            self.failed_saves = 0  # Reset on success
-            logger.info(f"✓ Trade saved: {trade_data.get('symbol')} {trade_data.get('direction')}")
+            self._consecutive_failures = 0
+            # Supabase client returns data list; grab first row id
+            rows = getattr(result, "data", []) or []
+            return rows[0].get("id") if rows else None
         except Exception as e:
-            await self._alert_database_failure("save_trade", str(e), trade_data)
+            self._consecutive_failures += 1
+            logger.error(f"⚠  Supabase INSERT [{table}] failed: {e}")
+            if self._consecutive_failures >= self._MAX_FAILURES:
+                logger.critical(
+                    f"🔥 {self._consecutive_failures} consecutive Supabase failures! "
+                    "Check network / credentials."
+                )
+                self._consecutive_failures = 0
+            return None
 
-    async def save_signal_snapshot(self, signal_data):
+    async def _sb_update(self, table: str, row_id: str, payload: Dict[str, Any]) -> bool:
         """
-        Save complete signal snapshot (including NO_TRADE decisions) (Non-blocking)
+        Update a single row identified by `row_id` (UUID).
+        Returns True on success, False on failure.
         """
-        if not self.supabase:
-            return
-
+        if not self.supabase or not row_id:
+            return False
         try:
-            await self._retry_with_backoff(
-                lambda: asyncio.to_thread(self.supabase.table("signals_snapshots").insert(signal_data).execute),
-                max_retries=2  # Lower retries for signals (less critical than trades)
+            await asyncio.to_thread(
+                self.supabase.table(table).update(payload).eq("id", row_id).execute
             )
+            self._consecutive_failures = 0
+            return True
         except Exception as e:
-            logger.error(f"⚠ Failed to save signal snapshot: {e}")
+            self._consecutive_failures += 1
+            logger.error(f"⚠  Supabase UPDATE [{table}] id={row_id} failed: {e}")
+            return False
 
-    async def save_rejected_signal(self, rejection_data):
-        """
-        Save rejected signal with reason (Non-blocking)
-        """
-        if not self.supabase:
-            return
+    # ── Public API ────────────────────────────────────────────────────────────
 
-        try:
-            await self._retry_with_backoff(
-                lambda: asyncio.to_thread(self.supabase.table("rejected_signals").insert(rejection_data).execute),
-                max_retries=2
+    async def log_trade_open(self, data: Dict[str, Any]) -> Optional[str]:
+        """
+        INSERT a new OPEN row into trade_logs when an order is filled.
+
+        Expected keys in `data`:
+            symbol, side, status="OPEN",
+            order_id, strategy, execution_type, api_latency_ms,
+            entry_price, quantity, leverage, margin_used,
+            sl_price, tp_price, open_fee_usdt,
+            confidence, final_score, e1_direction, e5_regime
+
+        Returns the newly created UUID (store in Redis so log_trade_close can use it).
+        """
+        payload = {**data, "status": "OPEN"}
+        trade_id = await self._sb_insert("trade_logs", payload)
+        if trade_id:
+            logger.info(
+                f"✓ trade_logs INSERT [{payload.get('symbol')} {payload.get('side')}] "
+                f"id={trade_id}"
             )
-        except Exception as e:
-            logger.error(f"⚠ Failed to save rejected signal: {e}")
+        return trade_id
 
-    async def save_trade_outcome(self, outcome_data):
+    async def log_trade_close(self, trade_id: str, data: Dict[str, Any]) -> None:
         """
-        Save trade result/PnL (Non-blocking)
-        """
-        if not self.supabase:
-            return
+        UPDATE the existing OPEN row with exit + PnL data.
 
-        try:
-            await self._retry_with_backoff(
-                lambda: asyncio.to_thread(self.supabase.table("trade_outcomes").insert(outcome_data).execute),
-                max_retries=3  # Critical data - more retries
+        Expected keys in `data`:
+            exit_price, closed_at, hold_time_s, close_reason,
+            close_fee_usdt,
+            pnl_gross_usdt, pnl_net_usdt, pnl_pct,
+            status="CLOSED"
+        """
+        payload = {**data, "status": "CLOSED"}
+        ok = await self._sb_update("trade_logs", trade_id, payload)
+        if ok:
+            logger.info(
+                f"✓ trade_logs UPDATE [CLOSED] id={trade_id} "
+                f"pnl_net={data.get('pnl_net_usdt')} USDT "
+                f"({data.get('pnl_pct', 0)*100:.3f}%)"
             )
-            logger.info(f"✓ Trade outcome saved: PnL={outcome_data.get('pnl')}")
-        except Exception as e:
-            await self._alert_database_failure("save_trade_outcome", str(e), outcome_data)
 
-    def update_performance_metrics(self, period_type="HOURLY"):
+    async def log_trade_failed(self, trade_id: str, error_msg: str) -> None:
+        """Mark a trade row as FAILED with an error message."""
+        await self._sb_update(
+            "trade_logs",
+            trade_id,
+            {"status": "FAILED", "error_msg": error_msg},
+        )
+
+    async def log_rejected(self, data: Dict[str, Any]) -> None:
         """
-        Calculate and store aggregated performance metrics
+        INSERT into rejected_signals when RiskManager rejects an order.
 
-        Should be called periodically (e.g., every hour)
+        Expected keys in `data`:
+            symbol, action, strategy, confidence,
+            rejection_reason, current_price, daily_pnl
         """
-        if not self.supabase:
-            return
-
-        try:
-            # This would typically be a stored procedure or complex query
-            # For now, just a placeholder for the concept
-            pass
-        except Exception as e:
-            logger.error(f"⚠ Error updating performance metrics: {e}")
+        await self._sb_insert("rejected_signals", data)
+        logger.debug(
+            f"✓ rejected_signals INSERT [{data.get('symbol')}] "
+            f"reason={data.get('rejection_reason')}"
+        )

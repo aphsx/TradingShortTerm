@@ -1,91 +1,251 @@
-# TECHNICAL DOCUMENTATION: VORTEX-7 Engine 🧠
-## Detailed System Breakdown & Logic Implementation
+# TECHNICAL DOCUMENTATION — VORTEX-7 Engine 🧠
+> **Version 2.0** | Updated February 2026
 
-This document provides a deep dive into the internal workings of the VORTEX-7 trading engine, covering the mathematical formulas, engine logic, and the core decision-making pipeline.
-
----
-
-## 1. The Multi-Engine Architecture (5-Engine System)
-
-VORTEX-7 uses a modular approach where specific types of market data are processed by isolated engines. Each engine outputs a normalized signal (direction + strength).
-
-### E1: Order Flow Engine (Weight: 35%)
-Focuses on the **Orderbook** (Level 2 data) to detect immediate supply and demand imbalances.
-- **Imbalance Calculation**: 
-  $$\text{Imbalance} = \frac{\sum \text{Bid Volume} - \sum \text{Ask Volume}}{\sum \text{Bid Volume} + \sum \text{Ask Volume}}$$
-- **Micro-price**: Calculates the "Fair Value" of the asset by weighting the mid-price by the volume at the best bid and ask.
-  $$\text{Micro Price} = \frac{\text{Best Bid Price} \times \text{Ask Qty} + \text{Best Ask Price} \times \text{Bid Qty}}{\text{Bid Qty} + \text{Ask Qty}}$$
-- **Strategy Influence**: Primarily used for spotting early breakouts before they appear on candles.
-
-### E2: Tick Engine (Weight: 25%)
-Processes every single trade (**aggTrade**) to understand current market momentum.
-- **Aggressor Ratio**: Measures the percentage of "Taker" buys vs. sells.
-  $$\text{Aggressor Ratio} = \frac{\text{Buy Volume}}{\text{Buy Volume} + \text{Sell Volume}}$$
-- **Velocity**: Tracks the rate of trades per second. High velocity often precedes a price expansion.
-
-### E3: Technical Engine (Weight: 20%)
-Traditional indicator analysis acting as a "Reality Check" for momentum.
-- **RSI (Relative Strength Index)**: Identifies overbought (>70) or oversold (<30) conditions.
-- **Bollinger Bands**: Detects price extensions and potential mean reversion zones.
-- **ATR (Average True Range)**: Feeds volatility data directly into the Risk Manager for dynamic SL/TP placement.
-
-### E4: Sentiment Engine (Weight: 12%)
-Uses aggregate market data to gauge crowd positioning and smart money activity.
-- **Long/Short Ratio (Contrarian)**: If the crowd (>70%) is Long, the engine applies a Short bias (anticipating a long-squeeze).
-- **Funding Rate**: Monitors the cost of holding positions. Expensive funding (>0.01%) suggests an overcrowded side.
-- **Smart Money Tracking**: Compares Top Trader ratios vs. Global ratios to spot institutional vs. retail divergence.
-
-### E5: Regime Filter (Weight: 8% + Global Switch)
-The "Brain" that decides if the market is tradeable and adjusts the behavior of all other engines.
-- **Volatility Phases**: Categorizes market into `LOW`, `NORMAL`, `HIGH`, or `EXTREME`.
-- **Dynamic Weighting**: 
-  - **Trending Market**: Increases weight for E1 and E2 (Momentum focused).
-  - **Ranging Market**: Increases weight for E3 (Oscillator focused).
-- **Safety Switch**: Blocks trading during `EXTREME_VOL` or high-spread conditions.
+เอกสารนี้ครอบคลุมสถาปัตยกรรม, logic, และ data layer ปัจจุบันของระบบ VORTEX-7
 
 ---
 
-## 2. Core Decision Pipeline
+## 1. สถาปัตยกรรมโดยรวม (System Architecture)
 
-The pipeline flows from raw data to order execution in under **10ms**.
+```
+ Market Data (WebSocket / REST)
+         │
+         ▼
+┌────────────────────┐      Hot Store
+│  VortexBot (async) │ ──► Redis  ◄──── read every 150 ms
+│   main.py          │
+└────────┬───────────┘
+         │ fan-out
+   ┌─────┴──────────────────────────────────┐
+   │                                         │
+   ▼                                         ▼
+5 Engines (E1–E5)                 position_monitor_loop
+   │                                  (every 2 s)
+   ▼                                         │
+DecisionEngine                     Close position if
+   │                                TP | SL | Time exit
+   ▼                                         │
+RiskManager                                  ▼
+   │ PASS                         log_trade_close (async)
+   ▼
+Executor  ──► Binance Futures API
+   │
+   ▼
+log_trade_open (async) ──► Supabase (fire-and-forget)
+```
 
-### Step 1: Weighted Scoring
-The `DecisionEngine` calculates a final score:
-$$\text{Final Score} = (s1 \times w1) + (s2 \times w2) + (s3 \times w3) + (s4 \times w4)$$
-Where $s$ is the signal strength (-1.0 to 1.0) and $w$ is the dynamic weight from E5.
-
-### Step 2: Strategy Match
-The system evaluates three distinct strategies:
-- **Strategy A (Momentum/Breakout)**: High E1/E2 conviction. Uses extremely tight Stop-Loss.
-- **Strategy B (Mean Reversion)**: High E3 conviction in Ranging markets. Uses wider targets.
-- **Strategy C (Liquidity Fishing)**: Reacts to high Sentiment (E4) and potential liquidation clusters.
-
-### Step 3: Risk Normalization
-The `RiskManager` performs critical safety checks:
-1.  **Fee/Slippage Test**: If the TP target is smaller than the round-trip fee + expected slippage, the trade is rejected.
-2.  **R:R Floor**: Rejects trades with a Reward-to-Risk ratio below the configured minimum (default 0.8 for high-win rate scalping).
-3.  **Leverage Clamping**: Dynamically sets leverage between **10x** and **30x** based on the required position size and available margin.
-4.  **Liquidation Prevention**: Automatically "squeezes" the SL and TP if the leverage is so high that the maintenance margin would be hit before the Stop-Loss price.
-
----
-
-## 3. Data Infrastructure
-
-- **Redis**: Acts as a "Hot Store" for:
-  - Real-time Orderbooks.
-  - Tick History Ring Buffers.
-  - Candle Cache (1m and 15m timeframes).
-- **Supabase (PostgreSQL)**:
-  - Stores every execution with high granularity (Latency, Slippage, Strategy used, Error types).
-  - Used for back-office performance reporting and strategy refinement.
+**กฎหลัก: ห้าม `await` DB ใน hot path**
+ทุก Supabase write ใช้ `asyncio.create_task()` เพื่อให้ event loop ทำงานต่อโดยไม่รอ
 
 ---
 
-## 4. Setup & Deployment Recommendations
+## 2. Multi-Engine System (E1–E5)
 
-- **Server Location**: Use AWS or Vultr in **Singapore (ap-southeast-1)** to minimize network latency to Binance's matching engine.
-- **Environment**: Use **Docker** to ensure consistent runtime environments for Redis and the Python engine.
-- **Monitoring**: It is recommended to use the integrated Telegram bot functionality (if configured) to receive real-time "Heartbeats" and Emergency Stop controls.
+### E1 — Order Flow Engine (Weight: 35%)
+วิเคราะห์ Level 2 Orderbook เพื่อหา supply/demand imbalance แบบ real-time
+
+| สูตร | คำอธิบาย |
+|------|----------|
+| `Imbalance = (BidVol − AskVol) / (BidVol + AskVol)` | ค่า +1 = bid ท่วม, −1 = ask ท่วม |
+| `MicroPrice = (BestBid × AskQty + BestAsk × BidQty) / (BidQty + AskQty)` | Fair value ณ ปัจจุบัน |
+
+- **VPIN (Volume-Synchronized P-I-N)**: วัด information asymmetry ระหว่าง buyer/seller
+- **OFI Velocity**: อัตราการเปลี่ยน Order Flow Imbalance ต่อนาที
+
+### E2 — Tick Engine (Weight: 25%)
+ประมวลผลทุก aggTrade เพื่อวัด momentum
+
+| Metric | ความหมาย |
+|--------|----------|
+| `Aggressor Ratio = BuyVol / (BuyVol + SellVol)` | > 0.55 = buy pressure |
+| `Velocity` | จำนวน trade/วินาที สูง = กำลังจะ expand |
+| `Alignment` | สัญญาณ E1 กับ E2 ตรงกันหรือไม่ (เพิ่ม confidence) |
+
+### E3 — Technical Engine (Weight: 20%)
+Reality-check ด้วย indicator แบบดั้งเดิม
+
+- **RSI**: Overbought (>70) / Oversold (<30)
+- **Bollinger Bands**: Extension ที่ขอบบน/ล่าง = แรงหรือจะกลับ
+- **ATR**: ส่งตรงให้ RiskManager ใช้กำหนด SL/TP แบบ dynamic
+- **Keltner Channel Squeeze**: ตรวจจับ low-vol periods ก่อน breakout
+
+### E4 — Sentiment Engine (Weight: 12%)
+วัด crowd positioning และ smart money
+
+| Signal | Logic |
+|--------|-------|
+| Long/Short Ratio > 70% Long | → **Short bias** (anticipate long squeeze) |
+| Funding Rate > 0.01% | → ฝั่งที่แพงจะถูก squeeze |
+| Top Trader vs Global ratio | → แยก institutional จาก retail |
+
+### E5 — Regime Filter (Weight: 8% + Global Switch)
+"สมองหลัก" ที่ตัดสินว่าตลาดเหมาะค้าหรือไม่
+
+| Regime | Vol Phase | ผลต่อระบบ |
+|--------|-----------|-----------|
+| TRENDING_UP / TRENDING_DOWN | NORMAL | เพิ่ม weight E1, E2 |
+| RANGING | NORMAL | เพิ่ม weight E3 |
+| ANY | EXTREME | **บล็อกเทรดทั้งหมด** |
 
 ---
-*VORTEX-7 Technical Manual | Confidential Support Document*
+
+## 3. Core Decision Pipeline
+
+```
+Signals (E1–E4) + Regime (E5)
+         │
+         ▼
+  DecisionEngine.evaluate()
+  ├─ Final Score = Σ(sᵢ × wᵢ)   [−1.0 → +1.0]
+  ├─ Strategy match: A | B | C
+  └─ Output: { action, strategy, confidence, final_score }
+         │
+         ▼
+  RiskManager.calculate()
+  ├─ Fee/Slippage test
+  ├─ R:R floor check (min 0.8)
+  ├─ Dynamic leverage (10x–30x)
+  ├─ Liquidation protection
+  └─ Daily PnL drawdown guard
+         │
+    PASS │ FAIL ──► log_rejected() → rejected_signals
+         ▼
+  Executor.execute_trade()
+  └─ POST to Binance Futures API
+         │
+    OK   │ ERROR
+         ▼
+  log_trade_open() → trade_logs (status=OPEN)
+```
+
+### Strategy Types
+
+| Strategy | Trigger | SL/TP |
+|----------|---------|-------|
+| A — Momentum/Breakout | E1 + E2 conviction สูง | SL แคบมาก |
+| B — Mean Reversion | E3 overbought/oversold ใน Ranging | TP กว้าง |
+| C — Liquidity Fishing | E4 sentiment extreme + liquidation cluster | SL ปานกลาง |
+
+---
+
+## 4. Database Layer (v2.0)
+
+### Tables
+
+#### `trade_logs` — ตารางหลัก (1 row per trade)
+
+| Column | Type | เติมตอน |
+|--------|------|---------|
+| `id` | UUID | INSERT |
+| `symbol`, `side`, `strategy` | text | INSERT |
+| `entry_price`, `quantity`, `leverage` | numeric | INSERT |
+| `open_fee_usdt` | numeric | INSERT (taker 0.05% × notional) |
+| `sl_price`, `tp_price` | numeric | INSERT |
+| `confidence`, `final_score`, `e1_direction`, `e5_regime` | numeric/text | INSERT (signal snapshot) |
+| `exit_price`, `closed_at`, `hold_time_s` | numeric/ts | UPDATE เมื่อปิด |
+| `close_reason` | text | UPDATE (TP_HIT / SL_HIT / TIME_EXIT) |
+| `close_fee_usdt` | numeric | UPDATE |
+| `pnl_gross_usdt` | numeric | UPDATE (ก่อนหักค่าธรรมเนียม) |
+| `pnl_net_usdt` | **numeric** | **UPDATE (กำไรจริง)** |
+| `pnl_pct` | numeric | UPDATE (% เทียบ margin) |
+| `status` | text | OPEN → CLOSED / FAILED |
+
+#### `rejected_signals` — บันทึก RiskManager rejects
+
+| Column | Type | คำอธิบาย |
+|--------|------|----------|
+| `symbol`, `action` | text | สัญญาณที่ถูกปฏิเสธ |
+| `rejection_reason` | text | FEE_TOO_HIGH / RR_LOW / DRAWDOWN / COOLDOWN |
+| `confidence` | numeric | ความมั่นใจของ DecisionEngine |
+| `daily_pnl` | numeric | PnL รายวัน ณ เวลาที่ถูกปฏิเสธ |
+
+### Views ที่ใช้บน Frontend
+
+| View | ใช้สำหรับ |
+|------|----------|
+| `v_trading_summary` | Dashboard หน้าหลัก (stats รวม) |
+| `v_symbol_summary` | Breakdown ต่อ symbol |
+| `v_recent_trades` | ตาราง 50 trades ล่าสุด |
+
+### Write Pattern (ป้องกันระบบช้า)
+
+```python
+# ✅ Fire-and-forget — loop ไม่หยุดรอ
+asyncio.create_task(storage.log_trade_open(data))
+
+# ✅ ปิดไม้ — ใช้ trade_id จาก Redis
+trade_id = pos_data.get('trade_id')
+asyncio.create_task(storage.log_trade_close(trade_id, close_data))
+
+# ❌ อย่าทำแบบนี้ใน hot path
+await storage.log_trade_open(data)  # บล็อก 150 ms loop!
+```
+
+---
+
+## 5. Hot Store — Redis Keys
+
+| Key Pattern | ข้อมูล | TTL |
+|-------------|--------|-----|
+| `position:{symbol}` | open position + trade_id | จนกว่าจะปิด |
+| `orderbook:{symbol}` | bids/asks (top 20) | overwrite ทุก tick |
+| `ticks:{symbol}` | ring buffer 2,000 trades | rolling |
+| `klines:{symbol}:{tf}` | OHLCV 96 candles (1m, 15m) | overwrite |
+| `sentiment:{symbol}` | OI, L/S ratio, funding rate | overwrite ทุก 30s |
+| `engine_signals:{symbol}` | output ของแต่ละ engine | overwrite |
+
+---
+
+## 6. Infrastructure & Deployment
+
+| Component | เทคโนโลยี | คำอธิบาย |
+|-----------|-----------|----------|
+| Bot Runtime | Python 3.11 + asyncio | single process, multi-task |
+| Market Data | CCXT Pro (WebSocket) | orderbook, trades, klines |
+| Hot Store | Redis | latency < 1ms |
+| Cold Store | Supabase (PostgreSQL) | write async, never blocks trading |
+| Exchange | Binance USD-M Futures | leverage up to 30x |
+
+### Server Recommendations
+- **Region**: AWS / Vultr **Singapore (ap-southeast-1)** — ใกล้ Binance matching engine
+- **Specs**: 2 vCPU, 4 GB RAM เป็นอย่างน้อย (Redis + Python + network buffer)
+- **Docker**: ใช้ `docker-compose.yml` ที่มาพร้อม project เพื่อ Redis
+- **Testnet**: ตั้ง `TESTNET=true` ใน `.env` — ใช้ Demo Trading ของ Binance โดยตรงผ่าน CCXT
+
+### Environment Variables (`.env`)
+```
+BINANCE_API_KEY=...
+BINANCE_SECRET_KEY=...
+TESTNET=true
+
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_KEY=eyJ...
+
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+TRADING_PAIRS=BTCUSDT,ETHUSDT
+```
+
+---
+
+## 7. Graceful Shutdown
+
+```
+Ctrl-C / SIGTERM
+      │
+      ▼
+_shutdown_event.set()
+      │
+      ├─ ทุก WebSocket loop ออกจาก while loop
+      ├─ trade_loop หยุด
+      ├─ position_monitor_loop หยุด
+      │
+      ▼
+_cancel_all_tasks() → gather(return_exceptions=True)
+exchange.close()  → ปิด WebSocket sessions
+```
+
+---
+
+*VORTEX-7 Technical Manual — Internal Use Only*

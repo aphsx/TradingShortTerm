@@ -1,259 +1,148 @@
 -- ===================================================================
--- 1. TABLES DEFINITION
+-- VORTEX-7  ·  Trading Database Schema  v2.0
+-- 2 tables only: trade_logs + rejected_signals
+-- All DB writes are fire-and-forget (asyncio.create_task) in Python
+-- so they never block the trading loop.
 -- ===================================================================
 
--- Table 1: TRADES (Executed Trades Only)
-CREATE TABLE IF NOT EXISTS trades (
-    id BIGSERIAL PRIMARY KEY,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    symbol VARCHAR(20) NOT NULL,
-    side VARCHAR(10) NOT NULL,  -- LONG, SHORT
-    strategy VARCHAR(5) NOT NULL,  -- A, B, C
-    order_id VARCHAR(50),
-    client_order_id VARCHAR(50),
-    execution_type VARCHAR(20),  -- limit, market
-    api_latency_ms INTEGER,
-    status VARCHAR(20),  -- SUCCESS, API_ERROR, CANCELLED
-    error_type VARCHAR(50),
-    error_msg TEXT,
-    entry_price DECIMAL(20, 8),
-    size_usdt DECIMAL(20, 8),
-    leverage INTEGER,
-    sl_price DECIMAL(20, 8),
-    tp1_price DECIMAL(20, 8),
-    confidence DECIMAL(5, 2),
-    final_score DECIMAL(10, 6)
+-- ─── 1. TRADE LOGS ──────────────────────────────────────────────────────────
+-- One row per trade attempt.
+--   OPEN  row is inserted the moment an order is filled.
+--   CLOSED row is updated with exit data when the position is closed.
+--   FAILED row stays with only the error_msg filled in.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS trade_logs (
+
+    -- Identity
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at      TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
+    symbol          VARCHAR(20)      NOT NULL,
+    side            VARCHAR(10)      NOT NULL,   -- LONG | SHORT
+    status          VARCHAR(20)      NOT NULL,   -- OPEN | CLOSED | FAILED
+
+    -- Order metadata
+    order_id        VARCHAR(64),
+    strategy        VARCHAR(40),
+    execution_type  VARCHAR(20),                -- MARKET | LIMIT
+    api_latency_ms  INTEGER,
+
+    -- ── Entry side ──────────────────────────────────────────────
+    entry_price     NUMERIC(20, 8),
+    quantity        NUMERIC(20, 8),             -- Base asset qty (e.g. BTC)
+    leverage        SMALLINT,
+    margin_used     NUMERIC(20, 8),             -- Notional / leverage (USDT)
+    sl_price        NUMERIC(20, 8),
+    tp_price        NUMERIC(20, 8),
+    opened_at       TIMESTAMPTZ      DEFAULT NOW(),
+    open_fee_usdt   NUMERIC(20, 8),             -- ค่าธรรมเนียมเปิดไม้ (USDT)
+
+    -- Signal context snapshot (filled at open, never changes)
+    confidence      NUMERIC(6, 2),              -- 0–100
+    final_score     NUMERIC(6, 4),              -- DecisionEngine score
+    e1_direction    VARCHAR(10),                -- LONG | SHORT | NEUTRAL
+    e5_regime       VARCHAR(30),                -- TRENDING_UP | RANGING | etc.
+
+    -- ── Exit side (NULL until closed) ───────────────────────────
+    exit_price      NUMERIC(20, 8),
+    closed_at       TIMESTAMPTZ,
+    hold_time_s     INTEGER,                    -- seconds the position was open
+    close_reason    VARCHAR(30),                -- TP_HIT | SL_HIT | TIME_EXIT | MANUAL
+    close_fee_usdt  NUMERIC(20, 8),             -- ค่าธรรมเนียมปิดไม้ (USDT)
+
+    -- ── PnL (filled when status = CLOSED) ───────────────────────
+    pnl_gross_usdt  NUMERIC(20, 8),             -- (exit − entry) × qty × leverage
+    pnl_net_usdt    NUMERIC(20, 8),             -- gross − open_fee − close_fee  ← ตัวเลขจริง
+    pnl_pct         NUMERIC(10, 6),             -- pnl_net / margin_used × 100
+
+    -- Error (filled when status = FAILED)
+    error_msg       TEXT
 );
 
--- Table 2: SIGNALS_SNAPSHOTS (All Decision Points)
-CREATE TABLE IF NOT EXISTS signals_snapshots (
-    id BIGSERIAL PRIMARY KEY,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    symbol VARCHAR(20) NOT NULL,
-    action VARCHAR(20) NOT NULL,  -- LONG, SHORT, NO_TRADE
-    reason TEXT,
-    final_score DECIMAL(10, 6),
-    confidence DECIMAL(5, 2),
-    strategy VARCHAR(5),
-    current_price DECIMAL(20, 8),
-    atr DECIMAL(20, 8),
+-- Indexes optimised for the most common dashboard queries
+CREATE INDEX IF NOT EXISTS idx_tl_created   ON trade_logs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tl_symbol    ON trade_logs (symbol, status);
+CREATE INDEX IF NOT EXISTS idx_tl_status    ON trade_logs (status);
 
-    -- Engine 1: Order Flow
-    e1_direction VARCHAR(20),
-    e1_strength DECIMAL(10, 6),
-    e1_conviction DECIMAL(10, 6),
-    e1_imbalance DECIMAL(10, 6),
-    e1_imbalance_l5 DECIMAL(10, 6),
-    e1_imbalance_l10 DECIMAL(10, 6),
-    e1_imbalance_l20 DECIMAL(10, 6),
-    e1_ofi_velocity DECIMAL(10, 6),
-    e1_vpin DECIMAL(10, 6),
-    e1_micro_price DECIMAL(20, 8),
 
-    -- Engine 2: Tick Momentum
-    e2_direction VARCHAR(20),
-    e2_strength DECIMAL(10, 6),
-    e2_aggressor_ratio DECIMAL(10, 6),
-    e2_aggressor_1s DECIMAL(10, 6),
-    e2_aggressor_5s DECIMAL(10, 6),
-    e2_aggressor_15s DECIMAL(10, 6),
-    e2_alignment DECIMAL(10, 6),
-    e2_velocity_ratio DECIMAL(10, 6),
-
-    -- Engine 3: Technical
-    e3_direction VARCHAR(20),
-    e3_strength DECIMAL(10, 6),
-    e3_rsi DECIMAL(10, 6),
-    e3_bb_zone VARCHAR(20),
-
-    -- Engine 4: Sentiment
-    e4_direction VARCHAR(20),
-    e4_strength DECIMAL(10, 6),
-    e4_ls_ratio DECIMAL(10, 6),
-    e4_funding_rate DECIMAL(10, 8),
-    e4_long_pct DECIMAL(10, 6),
-    e4_short_pct DECIMAL(10, 6),
-
-    -- Engine 5: Regime
-    e5_regime VARCHAR(20),
-    e5_vol_phase VARCHAR(20),
-    e5_tradeable BOOLEAN,
-
-    -- Weights
-    weight_e1 DECIMAL(5, 3),
-    weight_e2 DECIMAL(5, 3),
-    weight_e3 DECIMAL(5, 3),
-    weight_e4 DECIMAL(5, 3)
-);
-
--- Table 3: TRADE_OUTCOMES (Trade Results & PnL)
-CREATE TABLE IF NOT EXISTS trade_outcomes (
-    id BIGSERIAL PRIMARY KEY,
-    trade_id BIGINT REFERENCES trades(id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    closed_at TIMESTAMPTZ,
-    symbol VARCHAR(20) NOT NULL,
-    side VARCHAR(10) NOT NULL,
-    strategy VARCHAR(5) NOT NULL,
-    entry_price DECIMAL(20, 8),
-    entry_time TIMESTAMPTZ,
-    exit_price DECIMAL(20, 8),
-    exit_reason VARCHAR(50),
-    exit_type VARCHAR(20),
-    pnl_usdt DECIMAL(20, 8),
-    pnl_percent DECIMAL(10, 6),
-    fees_paid DECIMAL(20, 8),
-    net_pnl DECIMAL(20, 8),
-    hold_time_seconds INTEGER,
-    is_winner BOOLEAN,
-    hit_tp BOOLEAN,
-    hit_sl BOOLEAN,
-    mae DECIMAL(20, 8),
-    mfe DECIMAL(20, 8)
-);
-
--- Table 4: PERFORMANCE_METRICS (Aggregated Stats)
-CREATE TABLE IF NOT EXISTS performance_metrics (
-    id BIGSERIAL PRIMARY KEY,
-    period_start TIMESTAMPTZ NOT NULL,
-    period_end TIMESTAMPTZ NOT NULL,
-    period_type VARCHAR(20) NOT NULL,  -- HOURLY, DAILY
-    symbol VARCHAR(20),
-    strategy VARCHAR(5),
-    total_signals INTEGER DEFAULT 0,
-    total_trades INTEGER DEFAULT 0,
-    total_winners INTEGER DEFAULT 0,
-    total_losers INTEGER DEFAULT 0,
-    win_rate DECIMAL(5, 2),
-    total_pnl DECIMAL(20, 8),
-    total_fees DECIMAL(20, 8),
-    net_pnl DECIMAL(20, 8),
-    avg_winner DECIMAL(20, 8),
-    avg_loser DECIMAL(20, 8),
-    sharpe_ratio DECIMAL(10, 6),
-    max_drawdown DECIMAL(20, 8),
-    profit_factor DECIMAL(10, 6),
-    avg_hold_time_seconds INTEGER
-);
-
--- Table 5: ENGINE_PERFORMANCE
-CREATE TABLE IF NOT EXISTS engine_performance (
-    id BIGSERIAL PRIMARY KEY,
-    period_start TIMESTAMPTZ NOT NULL,
-    period_end TIMESTAMPTZ NOT NULL,
-    engine VARCHAR(5) NOT NULL,
-    symbol VARCHAR(20),
-    total_agreements INTEGER DEFAULT 0,
-    correct_agreements INTEGER DEFAULT 0,
-    false_agreements INTEGER DEFAULT 0,
-    total_oppositions INTEGER DEFAULT 0,
-    correct_oppositions INTEGER DEFAULT 0,
-    accuracy DECIMAL(5, 2),
-    avg_strength_when_correct DECIMAL(10, 6),
-    avg_strength_when_wrong DECIMAL(10, 6)
-);
-
--- Table 6: REJECTED_SIGNALS
+-- ─── 2. REJECTED SIGNALS ────────────────────────────────────────────────────
+-- Logged when RiskManager decides not to fire the order.
+-- Useful for strategy tuning: "how many good signals got killed by fees/rr?"
+-- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS rejected_signals (
-    id BIGSERIAL PRIMARY KEY,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    symbol VARCHAR(20) NOT NULL,
-    rejection_reason VARCHAR(100) NOT NULL,
-    rejection_stage VARCHAR(50),
-    would_be_action VARCHAR(10),
-    would_be_score DECIMAL(10, 6),
-    vpin DECIMAL(10, 6),
-    ofi_velocity DECIMAL(10, 6),
-    alignment DECIMAL(10, 6),
-    agreements INTEGER,
-    current_price DECIMAL(20, 8),
-    regime VARCHAR(20),
-    vol_phase VARCHAR(20),
-    price_move_5s DECIMAL(10, 6),
-    price_move_30s DECIMAL(10, 6),
-    was_correct_signal BOOLEAN
+
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    symbol           VARCHAR(20) NOT NULL,
+    action           VARCHAR(10),                -- LONG | SHORT (intended direction)
+    strategy         VARCHAR(40),
+    confidence       NUMERIC(6, 2),
+    rejection_reason TEXT,                       -- FEE_TOO_HIGH | RR_LOW | DRAWDOWN | COOLDOWN
+    current_price    NUMERIC(20, 8),
+    daily_pnl        NUMERIC(20, 8)
+
 );
 
--- ===================================================================
--- 2. INDEXES (Separate from CREATE TABLE)
--- ===================================================================
-CREATE INDEX IF NOT EXISTS idx_trades_symbol_created ON trades(symbol, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_trades_strategy ON trades(strategy);
-CREATE INDEX IF NOT EXISTS idx_signals_symbol_created ON signals_snapshots(symbol, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_signals_action ON signals_snapshots(action);
-CREATE INDEX IF NOT EXISTS idx_outcomes_trade_id ON trade_outcomes(trade_id);
-CREATE INDEX IF NOT EXISTS idx_outcomes_is_winner ON trade_outcomes(is_winner);
-CREATE INDEX IF NOT EXISTS idx_metrics_period ON performance_metrics(period_start DESC, period_type);
-CREATE INDEX IF NOT EXISTS idx_rejected_reason ON rejected_signals(rejection_reason);
+CREATE INDEX IF NOT EXISTS idx_rs_created ON rejected_signals (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rs_symbol  ON rejected_signals (symbol);
 
--- ===================================================================
--- 3. VIEWS FOR DASHBOARD
--- ===================================================================
 
--- Recent Performance (24h)
-CREATE OR REPLACE VIEW v_recent_performance AS
+-- ─── DASHBOARD VIEWS ────────────────────────────────────────────────────────
+
+-- Overall summary (all-time)
+CREATE OR REPLACE VIEW v_trading_summary AS
 SELECT
-    DATE_TRUNC('hour', t.created_at) as hour,
-    t.symbol,
-    t.strategy,
-    COUNT(*) as trades,
-    COUNT(CASE WHEN o.is_winner THEN 1 END) as winners,
-    ROUND(100.0 * COUNT(CASE WHEN o.is_winner THEN 1 END) / NULLIF(COUNT(*), 0), 2) as win_rate,
-    ROUND(SUM(o.net_pnl), 2) as net_pnl,
-    ROUND(AVG(t.confidence), 2) as avg_confidence
-FROM trades t
-LEFT JOIN trade_outcomes o ON t.id = o.trade_id
-WHERE t.created_at > NOW() - INTERVAL '24 hours'
-GROUP BY 1, 2, 3
-ORDER BY hour DESC;
+    COUNT(*)                                                    AS total_attempts,
+    COUNT(*) FILTER (WHERE status = 'CLOSED')                   AS total_closed,
+    COUNT(*) FILTER (WHERE status = 'FAILED')                   AS total_failed,
+    ROUND(SUM(pnl_net_usdt)               FILTER (WHERE status = 'CLOSED'), 4) AS net_profit_usdt,
+    ROUND(SUM(open_fee_usdt + close_fee_usdt) FILTER (WHERE status = 'CLOSED'), 4) AS total_fees_usdt,
+    ROUND(AVG(pnl_pct)                    FILTER (WHERE status = 'CLOSED'), 4) AS avg_pnl_pct,
+    ROUND(AVG(hold_time_s)                FILTER (WHERE status = 'CLOSED'), 0) AS avg_hold_s,
+    COUNT(*) FILTER (WHERE status = 'CLOSED' AND pnl_net_usdt > 0) AS win_count,
+    COUNT(*) FILTER (WHERE status = 'CLOSED' AND pnl_net_usdt < 0) AS loss_count
+FROM trade_logs;
 
--- Rejection Analysis
-CREATE OR REPLACE VIEW v_rejection_breakdown AS
+
+-- Per-symbol breakdown
+CREATE OR REPLACE VIEW v_symbol_summary AS
 SELECT
-    rejection_reason,
-    COUNT(*) as count,
-    ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER(), 2) as percentage,
-    AVG(would_be_score) as avg_score
-FROM rejected_signals
-WHERE created_at > NOW() - INTERVAL '24 hours'
-GROUP BY rejection_reason
-ORDER BY count DESC;
+    symbol,
+    side,
+    COUNT(*)                                             AS trades,
+    ROUND(SUM(pnl_net_usdt), 4)                          AS net_pnl,
+    ROUND(AVG(pnl_pct), 4)                               AS avg_pnl_pct,
+    ROUND(AVG(hold_time_s), 0)                           AS avg_hold_s,
+    ROUND(SUM(open_fee_usdt + close_fee_usdt), 4)        AS total_fees
+FROM  trade_logs
+WHERE status = 'CLOSED'
+GROUP BY symbol, side
+ORDER BY net_pnl DESC;
 
--- Engine Contribution (Optimized)
-CREATE OR REPLACE VIEW v_engine_contribution AS
-WITH base AS (
-    SELECT 
-        o.is_winner,
-        s.e1_direction, s.e2_direction, s.e3_direction
-    FROM trades t
-    JOIN trade_outcomes o ON t.id = o.trade_id
-    JOIN signals_snapshots s ON s.symbol = t.symbol 
-        AND s.created_at BETWEEN t.created_at - INTERVAL '1 second' AND t.created_at
-)
-SELECT 
-    'E1' as engine,
-    COUNT(*) FILTER (WHERE e1_direction != 'NEUTRAL') as active_signals,
-    ROUND(100.0 * COUNT(*) FILTER (WHERE is_winner AND e1_direction != 'NEUTRAL') / 
-          NULLIF(COUNT(*) FILTER (WHERE e1_direction != 'NEUTRAL'), 0), 2) as win_rate
-FROM base
-UNION ALL
-SELECT 
-    'E2',
-    COUNT(*) FILTER (WHERE e2_direction != 'NEUTRAL'),
-    ROUND(100.0 * COUNT(*) FILTER (WHERE is_winner AND e2_direction != 'NEUTRAL') / 
-          NULLIF(COUNT(*) FILTER (WHERE e2_direction != 'NEUTRAL'), 0), 2)
-FROM base
-UNION ALL
-SELECT 
-    'E3',
-    COUNT(*) FILTER (WHERE e3_direction != 'NEUTRAL'),
-    ROUND(100.0 * COUNT(*) FILTER (WHERE is_winner AND e3_direction != 'NEUTRAL') / 
-          NULLIF(COUNT(*) FILTER (WHERE e3_direction != 'NEUTRAL'), 0), 2)
-FROM base;
 
--- ===================================================================
--- 4. DOCUMENTATION
--- ===================================================================
-COMMENT ON TABLE trades IS 'บันทึกการเปิด Order จริง';
-COMMENT ON TABLE signals_snapshots IS 'Snapshot ข้อมูลดิบจากทุก Engine ณ เวลาที่ตัดสินใจ';
-COMMENT ON TABLE trade_outcomes IS 'สรุปผลกำไร/ขาดทุน และ MAE/MFE ของแต่ละ Trade';
+-- Recent 50 trades (for frontend trade log table)
+CREATE OR REPLACE VIEW v_recent_trades AS
+SELECT
+    id,
+    created_at,
+    symbol,
+    side,
+    status,
+    strategy,
+    leverage,
+    entry_price,
+    exit_price,
+    sl_price,
+    tp_price,
+    open_fee_usdt,
+    close_fee_usdt,
+    pnl_gross_usdt,
+    pnl_net_usdt,
+    pnl_pct,
+    hold_time_s,
+    close_reason,
+    confidence,
+    e5_regime,
+    error_msg
+FROM  trade_logs
+ORDER BY created_at DESC
+LIMIT 50;

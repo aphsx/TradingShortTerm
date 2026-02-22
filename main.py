@@ -381,29 +381,38 @@ class VortexBot:
 
                     # === CHECK SL/TP HIT ===
                     if hit_sl or hit_tp:
-                        reason = "TP HIT" if hit_tp else "SL HIT"
-                        leverage = float(pos_data.get('leverage', 10))
-                        realized_pnl = pnl_pct * float(pos_data.get('quantity', 0)) * entry_price
+                        reason = "TP_HIT" if hit_tp else "SL_HIT"
+                        leverage   = float(pos_data.get('leverage', 10))
+                        quantity   = float(pos_data.get('quantity', 0))
+                        margin     = (entry_price * quantity) / max(leverage, 1)
+                        pnl_gross  = pnl_pct * entry_price * quantity
+                        open_fee   = float(pos_data.get('open_fee_usdt', 0))
+                        # Estimate close fee: notional × 0.05% (taker)
+                        close_fee  = current_price * quantity * 0.0005
+                        pnl_net    = pnl_gross - open_fee - close_fee
+                        pnl_pct_margin = (pnl_net / margin * 100) if margin > 0 else 0
+                        hold_s     = int(time.time() - open_time)
 
                         logger.info(
                             f"📊 POSITION CLOSED [{reason}] {raw_sym} {side} | "
                             f"Entry: {entry_price:.2f} → Exit: {current_price:.2f} | "
-                            f"PnL: {pnl_pct*100:.3f}% ({realized_pnl:.4f} USDT)"
+                            f"Net PnL: {pnl_net:.4f} USDT ({pnl_pct_margin:.3f}%)"
                         )
 
-                        # Record result for Kelly / drawdown
-                        self.risk.record_trade_result(realized_pnl)
+                        # Record result for Kelly / drawdown tracking
+                        self.risk.record_trade_result(pnl_net)
 
-                        # Save outcome to DB
-                        asyncio.create_task(self.storage.save_trade_outcome({
-                            "symbol": raw_sym,
-                            "side": side,
-                            "entry_price": entry_price,
-                            "exit_price": current_price,
-                            "pnl_pct": pnl_pct,
-                            "pnl_usdt": realized_pnl,
-                            "exit_reason": reason,
-                            "hold_time_s": time.time() - open_time
+                        # ── DB write (fire-and-forget, never blocks loop) ─
+                        trade_id = pos_data.get('trade_id', '')
+                        asyncio.create_task(self.storage.log_trade_close(trade_id, {
+                            "exit_price":     current_price,
+                            "closed_at":      datetime.datetime.utcnow().isoformat(),
+                            "hold_time_s":    hold_s,
+                            "close_reason":   reason,
+                            "close_fee_usdt": round(close_fee, 8),
+                            "pnl_gross_usdt": round(pnl_gross, 8),
+                            "pnl_net_usdt":   round(pnl_net, 8),
+                            "pnl_pct":        round(pnl_pct_margin, 6),
                         }))
 
                         self.storage.delete_position(raw_sym)
@@ -446,22 +455,31 @@ class VortexBot:
                     # Close stale positions (scalps shouldn't be held > 5 min)
                     hold_time = time.time() - open_time
                     if hold_time > max_hold_seconds:
+                        quantity   = float(pos_data.get('quantity', 0))
+                        leverage   = float(pos_data.get('leverage', 10))
+                        margin     = (entry_price * quantity) / max(leverage, 1)
+                        pnl_gross  = pnl_pct * entry_price * quantity
+                        open_fee   = float(pos_data.get('open_fee_usdt', 0))
+                        close_fee  = current_price * quantity * 0.0005
+                        pnl_net    = pnl_gross - open_fee - close_fee
+                        pnl_pct_margin = (pnl_net / margin * 100) if margin > 0 else 0
+
                         logger.warning(
                             f"⏰ TIME EXIT {raw_sym}: Held {hold_time:.0f}s > {max_hold_seconds}s limit. "
-                            f"PnL: {pnl_pct*100:.3f}%"
+                            f"Net PnL: {pnl_net:.4f} USDT ({pnl_pct_margin:.3f}%)"
                         )
-                        realized_pnl = pnl_pct * float(pos_data.get('quantity', 0)) * entry_price
-                        self.risk.record_trade_result(realized_pnl)
+                        self.risk.record_trade_result(pnl_net)
 
-                        asyncio.create_task(self.storage.save_trade_outcome({
-                            "symbol": raw_sym,
-                            "side": side,
-                            "entry_price": entry_price,
-                            "exit_price": current_price,
-                            "pnl_pct": pnl_pct,
-                            "pnl_usdt": realized_pnl,
-                            "exit_reason": "TIME_EXIT",
-                            "hold_time_s": hold_time
+                        trade_id = pos_data.get('trade_id', '')
+                        asyncio.create_task(self.storage.log_trade_close(trade_id, {
+                            "exit_price":     current_price,
+                            "closed_at":      datetime.datetime.utcnow().isoformat(),
+                            "hold_time_s":    int(hold_time),
+                            "close_reason":   "TIME_EXIT",
+                            "close_fee_usdt": round(close_fee, 8),
+                            "pnl_gross_usdt": round(pnl_gross, 8),
+                            "pnl_net_usdt":   round(pnl_net, 8),
+                            "pnl_pct":        round(pnl_pct_margin, 6),
                         }))
 
                         self.storage.delete_position(raw_sym)
@@ -543,16 +561,15 @@ class VortexBot:
                                     f"[{current_time}] {raw_sym} | P: {price:.2f} | "
                                     f"RGM: {regime_info} | RISK_REJECT: {risk_params.get('reason')}"
                                 )
-                                # Log rejection to Supabase for analysis
-                                asyncio.create_task(self.storage.save_rejected_signal({
-                                    "symbol": raw_sym,
-                                    "action": dec["action"],
-                                    "strategy": dec.get("strategy", ""),
-                                    "confidence": dec.get("confidence", 0),
+                                # ── Fire-and-forget: log rejection (never blocks) ──
+                                asyncio.create_task(self.storage.log_rejected({
+                                    "symbol":           raw_sym,
+                                    "action":           dec["action"],
+                                    "strategy":         dec.get("strategy", ""),
+                                    "confidence":       dec.get("confidence", 0),
                                     "rejection_reason": risk_params.get("reason", ""),
-                                    "rejection_source": "RiskManager",
-                                    "current_price": price,
-                                    "daily_pnl": risk_params.get("daily_pnl", 0),
+                                    "current_price":    price,
+                                    "daily_pnl":        risk_params.get("daily_pnl", 0),
                                 }))
                                 continue
 
@@ -570,54 +587,56 @@ class VortexBot:
                             order = await self.executor.execute_trade(raw_sym, dec, risk_params, price)
 
                             if order:
-                                # 1. Save Signal Snapshot (เหตุผลที่ยิงไม้่นี้)
-                                asyncio.create_task(self.storage.save_signal_snapshot({
-                                    "symbol": raw_sym,
-                                    "action": dec["action"],
-                                    "reason": dec.get("reason", ""),
-                                    "final_score": dec.get("final_score", 0),
-                                    "confidence": dec.get("confidence", 0),
-                                    "strategy": dec.get("strategy", ""),
-                                    "current_price": price,
-                                    "atr": s3.get("atr", 0),
-                                    "e1_direction": s1.get("direction"),
-                                    "e1_strength": s1.get("strength"),
-                                    "e1_vpin": s1.get("vpin", 0),
-                                    "e2_direction": s2.get("direction"),
-                                    "e2_strength": s2.get("strength"),
-                                    "e2_alignment": s2.get("alignment", 0),
-                                    "e3_direction": s3.get("direction"),
-                                    "e3_rsi": s3.get("rsi"),
-                                    "e4_direction": s4.get("direction"),
-                                    "e5_regime": s5.get("regime")
-                                }))
+                                entry_p  = float(order.get("price", price))
+                                qty      = float(order.get("quantity", 0))
+                                lev      = int(risk_params.get("leverage", 10))
+                                margin   = (entry_p * qty) / max(lev, 1)
+                                # Estimate open fee: notional × 0.05% (taker)
+                                open_fee = entry_p * qty * 0.0005
 
-                                # 2. Update Local Redis State (If success)
+                                # ── Step 1: INSERT trade_logs row (fire-and-forget) ──
+                                # We await inside the task so we can stash the returned UUID.
+                                # The lambda trick keeps the outer loop non-blocking.
+                                async def _open_and_store(o=order, ep=entry_p, q=qty,
+                                                           lv=lev, mg=margin, of=open_fee,
+                                                           sym=raw_sym):
+                                    trade_id = await self.storage.log_trade_open({
+                                        "symbol":         sym,
+                                        "side":           o.get("side", dec["action"]),
+                                        "order_id":       o.get("order_id"),
+                                        "strategy":       dec.get("strategy", ""),
+                                        "execution_type": o.get("execution_type"),
+                                        "api_latency_ms": o.get("api_latency_ms"),
+                                        "entry_price":    ep,
+                                        "quantity":       q,
+                                        "leverage":       lv,
+                                        "margin_used":    round(mg, 8),
+                                        "sl_price":       o.get("sl_price", 0),
+                                        "tp_price":       o.get("tp_price", 0),
+                                        "open_fee_usdt":  round(of, 8),
+                                        "confidence":     dec.get("confidence", 0),
+                                        "final_score":    dec.get("final_score", 0),
+                                        "e1_direction":   s1.get("direction"),
+                                        "e5_regime":      s5.get("regime"),
+                                        "error_msg":      o.get("error_msg"),
+                                    })
+                                    return trade_id
+
+                                # ── Step 2: Update Redis hot state (sync, instant) ──
                                 if order.get("status", "SUCCESS") == "SUCCESS":
-                                    order['open_time'] = str(time.time())
-                                    order['leverage'] = str(risk_params.get('leverage', 10))
-                                    self.storage.set_position(raw_sym, order)
-
-                                # 3. Save Trade Results (Success หรือ Error ก็จะเซฟลงตาราง trades)
-                                asyncio.create_task(self.storage.save_trade({
-                                    "symbol": order.get("symbol", raw_sym),
-                                    "side": order.get("side", dec["action"]),
-                                    "strategy": order.get("strategy", dec["strategy"]),
-                                    "order_id": order.get("order_id"),
-                                    "client_order_id": order.get("client_order_id"),
-                                    "execution_type": order.get("execution_type"),
-                                    "api_latency_ms": order.get("api_latency_ms"),
-                                    "status": order.get("status"),       # SUCCESS หรือ API_ERROR
-                                    "error_type": order.get("error_type"),
-                                    "error_msg": order.get("error_msg"),
-                                    "entry_price": order.get("price", 0),
-                                    "size_usdt": order.get("quantity", 0) * order.get("price", 0),
-                                    "leverage": risk_params.get("leverage", 1),
-                                    "sl_price": order.get("sl_price", 0),
-                                    "tp1_price": order.get("tp_price", 0),
-                                    "confidence": dec.get("confidence", 0),
-                                    "final_score": dec.get("final_score", 0)
-                                }))
+                                    order['open_time']    = str(time.time())
+                                    order['leverage']     = str(lev)
+                                    order['open_fee_usdt'] = str(round(open_fee, 8))
+                                    # trade_id stored after INSERT completes via callback
+                                    async def _store_and_bind(o=order, sym=raw_sym):
+                                        tid = await _open_and_store()
+                                        if tid:
+                                            o['trade_id'] = tid
+                                            self.storage.set_position(sym, o)
+                                    asyncio.create_task(_store_and_bind())
+                                else:
+                                    # FAILED order — still log it, no need to store position
+                                    asyncio.create_task(_open_and_store())
 
             except asyncio.CancelledError:
                 break
