@@ -4,9 +4,14 @@ from config import API_KEY, SECRET_KEY, TESTNET, TRADING_PAIRS, DB_LOG_INTERVAL
 from storage import DataStorage
 from engines import Engine1OrderFlow, Engine2Tick, Engine3Technical, Engine4Sentiment, Engine5Regime
 from core import DecisionEngine, RiskManager, Executor
+from logger_config import setup_logging, get_logger
 import datetime
 import time
 import traceback
+
+# Initialize logging
+setup_logging(console_level="INFO")
+logger = get_logger(__name__)
 
 class VortexBot:
     def __init__(self):
@@ -54,7 +59,7 @@ class VortexBot:
             )
 
         delay = self.ws_reconnect_delays[key]
-        print(f"⚠ WebSocket reconnecting in {delay}s (key: {key})")
+        logger.warning(f"WebSocket reconnecting in {delay}s (key: {key})")
         await asyncio.sleep(delay)
 
     def _reset_backoff(self, key: str):
@@ -84,10 +89,10 @@ class VortexBot:
                 break
             except Exception as e:
                 consecutive_errors += 1
-                print(f"⚠ WS OB {symbol} Error ({consecutive_errors}/{max_consecutive_errors}): {e}")
+                logger.error(f"WS OB {symbol} Error ({consecutive_errors}/{max_consecutive_errors}): {e}")
 
                 if consecutive_errors >= max_consecutive_errors:
-                    print(f"🔥 CIRCUIT BREAKER: Orderbook WS for {symbol} failed {max_consecutive_errors} times, stopping")
+                    logger.critical(f"CIRCUIT BREAKER: Orderbook WS for {symbol} failed {max_consecutive_errors} times, stopping")
                     break
 
                 await self._exponential_backoff_sleep(backoff_key)
@@ -114,10 +119,10 @@ class VortexBot:
                 break
             except Exception as e:
                 consecutive_errors += 1
-                print(f"⚠ WS TR {symbol} Error ({consecutive_errors}/{max_consecutive_errors}): {e}")
+                logger.error(f"WS TR {symbol} Error ({consecutive_errors}/{max_consecutive_errors}): {e}")
 
                 if consecutive_errors >= max_consecutive_errors:
-                    print(f"🔥 CIRCUIT BREAKER: Trades WS for {symbol} failed {max_consecutive_errors} times, stopping")
+                    logger.critical(f"CIRCUIT BREAKER: Trades WS for {symbol} failed {max_consecutive_errors} times, stopping")
                     break
 
                 await self._exponential_backoff_sleep(backoff_key)
@@ -133,7 +138,7 @@ class VortexBot:
             hist = await self.exchange.fetch_ohlcv(symbol, timeframe, limit=96)
             self.storage.set_klines(raw_sym, timeframe, hist)
         except Exception as e:
-            print(f"⚠ Prefetch Kline Error for {symbol}: {e}")
+            logger.error(f"Prefetch Kline Error for {symbol}: {e}")
 
         while True:
             try:
@@ -155,10 +160,10 @@ class VortexBot:
                 break
             except Exception as e:
                 consecutive_errors += 1
-                print(f"⚠ WS Kline {symbol} {timeframe} Error ({consecutive_errors}/{max_consecutive_errors}): {e}")
+                logger.error(f"WS Kline {symbol} {timeframe} Error ({consecutive_errors}/{max_consecutive_errors}): {e}")
 
                 if consecutive_errors >= max_consecutive_errors:
-                    print(f"🔥 CIRCUIT BREAKER: Kline WS for {symbol} {timeframe} failed {max_consecutive_errors} times, stopping")
+                    logger.critical(f"CIRCUIT BREAKER: Kline WS for {symbol} {timeframe} failed {max_consecutive_errors} times, stopping")
                     break
 
                 await self._exponential_backoff_sleep(backoff_key)
@@ -211,18 +216,18 @@ class VortexBot:
                 
                 self.storage.set_sentiment(raw_sym, data)
                 if symbol == "ETH/USDT:USDT" or symbol == "BTC/USDT:USDT":
-                    print(f"DEBUG: Successfully stored SNT for {symbol}")
+                    logger.debug(f"Successfully stored SNT for {symbol}")
                 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"Sentiment Poll Error for {symbol}: {e}")
+                logger.error(f"Sentiment Poll Error for {symbol}: {e}")
                 
             # Wait 30 seconds before next poll to conserve weight limits
             await asyncio.sleep(30)
 
     async def trade_loop(self):
-        print("Trading loop started...")
+        logger.info("Trading loop started...")
         while True:
             try:
                 for symbol in self.ccxt_symbols:
@@ -253,23 +258,23 @@ class VortexBot:
                     if dec["action"] == "NO_TRADE":
                         regime_info = f"{s5.get('regime', 'UNK')}|{s5.get('vol_phase', 'UNK')}"
                         sent_info = f"{s4.get('direction', 'UNK')}"
-                        print(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | SNT: {sent_info} | SKIP: {dec.get('reason', 'Wait')}")
+                        logger.info(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | SNT: {sent_info} | SKIP: {dec.get('reason', 'Wait')}")
                     else:
                         regime_info = f"{s5.get('regime', 'UNK')}|{s5.get('vol_phase', 'UNK')}"
-                        print(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | Action: {dec['action']} | Strat: {dec['strategy']} | Score: {dec['final_score']:.2f} | Conf: {dec['confidence']:.1f}%")
+                        logger.info(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | Action: {dec['action']} | Strat: {dec['strategy']} | Score: {dec['final_score']:.2f} | Conf: {dec['confidence']:.1f}%")
                         
                         if price > 0:
                             risk_params = self.risk.calculate(dec, price, s3.get('atr', 0), s5.get('param_overrides', {}))
                             
                             # Skip if RiskManager rejects (Fee/Spread/RR issues)
                             if risk_params is not None and risk_params.get("action") == "NO_TRADE":
-                                print(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | SKIP: {risk_params.get('reason')}")
+                                logger.info(f"[{current_time}] {raw_sym} | P: {price:.2f} | RGM: {regime_info} | SKIP: {risk_params.get('reason')}")
                                 continue
 
                             # --- POSITION GUARD: Prevent duplicate trades ---
                             existing_position = self.storage.get_position(raw_sym)
                             if existing_position:
-                                print(f"⚠ SKIP: {raw_sym} already has open position: {existing_position.get('side')} @ {existing_position.get('price')}")
+                                logger.info(f"SKIP: {raw_sym} already has open position: {existing_position.get('side')} @ {existing_position.get('price')}")
                                 continue
 
                             # --- ACTUAL TRADE ATTEMPT ---
@@ -326,8 +331,7 @@ class VortexBot:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"Trade Loop Error: {e}")
-                traceback.print_exc()
+                logger.error(f"Trade Loop Error: {e}", exc_info=True)
 
             # === OPTIMIZED LOOP INTERVAL FOR SCALPING ===
             # Research shows optimal interval for scalping is 100-200ms
@@ -345,8 +349,8 @@ class VortexBot:
             await asyncio.sleep(0.15)  # 150 milliseconds
 
     async def run(self):
-        print(f"Starting VORTEX-7 Engine via CCXT.PRO... (TESTNET: {TESTNET})")
-        print(f"Connecting to streams: {self.ccxt_symbols}")
+        logger.info(f"Starting VORTEX-7 Engine via CCXT.PRO... (TESTNET: {TESTNET})")
+        logger.info(f"Connecting to streams: {self.ccxt_symbols}")
         
         loop_tasks = []
         for sym in self.ccxt_symbols:
