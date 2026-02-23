@@ -118,7 +118,7 @@ fn main() -> Result<()> {
 
     // ─── 2. Nautilus BacktestEngine ────────────────────────────────────
     let logging = LoggerConfig {
-        stdout_level: LevelFilter::Info,
+        stdout_level: LevelFilter::Error,
         is_colored: true,
         ..LoggerConfig::default()
     };
