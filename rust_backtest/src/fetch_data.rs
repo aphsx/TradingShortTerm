@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use tokio::time::{sleep, Duration};
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct BinanceKline {
     #[serde(rename = "0")]
     open_time: i64,
@@ -21,16 +22,6 @@ struct BinanceKline {
     close: String,
     #[serde(rename = "5")]
     volume: String,
-    #[serde(rename = "6")]
-    close_time: i64,
-    #[serde(rename = "7")]
-    quote_asset_volume: String,
-    #[serde(rename = "8")]
-    number_of_trades: i64,
-    #[serde(rename = "9")]
-    taker_buy_base_asset_volume: String,
-    #[serde(rename = "10")]
-    taker_buy_quote_asset_volume: String,
 }
 
 #[tokio::main]
@@ -122,29 +113,30 @@ async fn download_klines(
             continue;
         }
 
-        let klines_raw: Vec<Vec<String>> = response.json().await?;
+        // Get raw response text for debugging
+        let response_text = response.text().await?;
+        let klines_raw: Vec<Vec<serde_json::Value>> = serde_json::from_str(&response_text)
+            .map_err(|e| {
+                println!("Debug - Raw response: {}", &response_text[..response_text.len().min(200)]);
+                anyhow::anyhow!("Failed to parse klines: {}", e)
+            })?;
         let count = klines_raw.len();
         
         if count > 0 {
             let klines: Vec<BinanceKline> = klines_raw.into_iter().map(|arr| BinanceKline {
-                open_time: arr[0].parse().unwrap_or(0),
-                open: arr[1].clone(),
-                high: arr[2].clone(),
-                low: arr[3].clone(),
-                close: arr[4].clone(),
-                volume: arr[5].clone(),
-                close_time: arr[6].parse().unwrap_or(0),
-                quote_asset_volume: arr[7].clone(),
-                number_of_trades: arr[8].parse().unwrap_or(0),
-                taker_buy_base_asset_volume: arr[9].clone(),
-                taker_buy_quote_asset_volume: arr[10].clone(),
+                open_time: arr[0].as_i64().unwrap_or(0),
+                open: arr[1].as_str().unwrap_or("0").to_string(),
+                high: arr[2].as_str().unwrap_or("0").to_string(),
+                low: arr[3].as_str().unwrap_or("0").to_string(),
+                close: arr[4].as_str().unwrap_or("0").to_string(),
+                volume: arr[5].as_str().unwrap_or("0").to_string(),
             }).collect();
             
-            let last_time = klines.last().unwrap().close_time;
+            let last_time = klines.last().unwrap().open_time;
             all_klines.extend(klines);
             
             if count == 1000 {
-                // If we got max results, resume from the last kline close time
+                // If we got max results, resume from the last kline open time
                 current_start = last_time + 1;
             } else {
                 current_start = batch_end;
@@ -172,9 +164,6 @@ fn klines_to_dataframe(klines: Vec<BinanceKline>) -> Result<DataFrame> {
     let lows: Vec<f64> = klines.iter().map(|k| k.low.parse::<f64>().unwrap_or(0.0)).collect();
     let closes: Vec<f64> = klines.iter().map(|k| k.close.parse::<f64>().unwrap_or(0.0)).collect();
     let volumes: Vec<f64> = klines.iter().map(|k| k.volume.parse::<f64>().unwrap_or(0.0)).collect();
-    let close_times: Vec<i64> = klines.iter().map(|k| k.close_time).collect();
-    let quote_asset_volumes: Vec<f64> = klines.iter().map(|k| k.quote_asset_volume.parse::<f64>().unwrap_or(0.0)).collect();
-    let number_of_trades: Vec<i64> = klines.iter().map(|k| k.number_of_trades).collect();
     
     // Convert timestamps to readable datetime strings
     let timestamps: Vec<String> = open_times.iter()
@@ -191,10 +180,7 @@ fn klines_to_dataframe(klines: Vec<BinanceKline>) -> Result<DataFrame> {
         "low" => lows,
         "close" => closes,
         "volume" => volumes,
-        "open_time" => open_times,
-        "close_time" => close_times,
-        "quote_asset_volume" => quote_asset_volumes,
-        "number_of_trades" => number_of_trades
+        "open_time" => open_times
     )?;
 
     Ok(df)
