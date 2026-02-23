@@ -64,12 +64,65 @@ pub struct SymbolState {
     pub prev_close: Option<f64>,
     /// Total quantity open (positive = net long, negative = net short).
     pub qty_open: f64,
+    /// Entry price for current position
+    pub entry_price: Option<f64>,
+    /// ATR for dynamic profit targets
+    pub atr: Option<f64>,
+    /// Price history for ATR calculation
+    pub price_history: Vec<f64>,
+    /// Bars held in current position
+    pub bars_held: usize,
 }
 
 impl SymbolState {
     pub fn new(cfg: AppConfig) -> Self {
         let engine = StrategyEngine::new(cfg);
-        Self { engine, prev_close: None, qty_open: 0.0 }
+        Self { 
+            engine, 
+            prev_close: None, 
+            qty_open: 0.0,
+            entry_price: None,
+            atr: None,
+            price_history: Vec::new(),
+            bars_held: 0,
+        }
+    }
+    
+    /// Calculate ATR (Average True Range) for dynamic profit targets
+    fn update_atr(&mut self, high: f64, low: f64, close: f64) {
+        self.price_history.push(close);
+        
+        // Keep only last 14 bars for ATR calculation
+        if self.price_history.len() > 14 {
+            self.price_history.remove(0);
+        }
+        
+        if self.price_history.len() >= 14 {
+            let mut true_ranges = Vec::new();
+            for i in 1..self.price_history.len() {
+                let prev_close = self.price_history[i-1];
+                let high_low = high - low;
+                let high_close = (high - prev_close).abs();
+                let low_close = (low - prev_close).abs();
+                let tr = high_low.max(high_close.max(low_close));
+                true_ranges.push(tr);
+            }
+            
+            if !true_ranges.is_empty() {
+                self.atr = Some(true_ranges.iter().sum::<f64>() / true_ranges.len() as f64);
+            }
+        }
+    }
+    
+    /// Calculate scalping profit target based on ATR
+    fn get_profit_target(&self) -> f64 {
+        if let (Some(_entry_price), Some(atr)) = (self.entry_price, self.atr) {
+            // Conservative scalping: 0.5x ATR as profit target
+            atr * 0.5
+        } else {
+            // Fallback: 0.2% profit target
+            0.002
+        }
     }
 }
 
@@ -216,6 +269,8 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
         // Clone data we need before borrowing mutably
         let close = bar.close.as_f64();
         let open = bar.open.as_f64();
+        let high = bar.high.as_f64();
+        let low = bar.low.as_f64();
         let volume = bar.volume.as_f64();
         
         if volume <= 0.0 || close <= 0.0 {
@@ -227,10 +282,13 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
         }
 
         // Get state and calculate signal first
-        let (signal, prev_close) = {
+        let (signal, prev_close, _high, _low) = {
             let state = self.states.get_mut(&instrument_id).ok_or_else(|| {
                 anyhow::anyhow!("No state found for instrument {:?}", instrument_id)
             })?;
+            
+            // Update ATR with current bar data
+            state.update_atr(high, low, close);
             
             let log_return = match state.prev_close {
                 Some(prev) if prev > 0.0 => (close / prev).ln(),
@@ -249,7 +307,7 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
             };
 
             let signal = state.engine.on_bar(close, log_return, &tick);
-            (signal, prev_close)
+            (signal, prev_close, high, low)
         };
         
         // Update prev_close in state
@@ -264,11 +322,14 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
             false
         };
         
-        // Handle signal for opening position
+        // Handle signal for opening position (Scalping Mode)
         if let Some(sig) = signal {
             if !has_open_position {
+                // More aggressive entry for scalping
                 let equity = self.equity;
-                let base_qty = (equity * sig.size_frac / close).max(1e-8);
+                // Smaller position size for risk management
+                let risk_per_trade = 0.02; // 2% risk per trade
+                let base_qty = (equity * risk_per_trade / close).max(1e-8);
                 let side = if sig.direction == 1 { OrderSide::Buy } else { OrderSide::Sell };
                 
                 // Format quantity according to instrument precision
@@ -290,30 +351,60 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
                 if let Some(state) = self.states.get_mut(&instrument_id) {
                     state.engine.open_position(sig.clone());
                     state.qty_open = if side == OrderSide::Buy { base_qty } else { -base_qty };
+                    state.entry_price = Some(close);
+                    state.bars_held = 0;
                 }
             }
         } else if has_open_position {
-            // Check for exit conditions
+            // Check for fast exit conditions (Scalping)
             let (should_exit, exit_side, exit_qty, trade_record) = {
-                if let Some(state) = self.states.get(&instrument_id) {
-                    if let Some(ref pos) = state.engine.position {
-                        let z = state.engine.ou.last_z().unwrap_or(0.0);
-                        if let Some(reason) = state.engine.check_exit(close, z, pos.bars_held) {
-                            let side = if state.qty_open > 0.0 { OrderSide::Sell } else { OrderSide::Buy };
-                            let qty = state.qty_open.abs();
-                            let record = TradeRecord {
-                                instrument_id,
-                                direction: if state.qty_open > 0.0 { 1 } else { -1 },
-                                entry_price: pos.signal.entry_price,
-                                exit_price: close,
-                                pnl_frac: (close - pos.signal.entry_price) / pos.signal.entry_price * (if state.qty_open > 0.0 { 1.0 } else { -1.0 }),
-                                exit_reason: reason.clone(),
-                                bars_held: pos.bars_held,
-                            };
-                            (true, side, qty, Some(record))
+                if let Some(state) = self.states.get_mut(&instrument_id) {
+                    state.bars_held += 1; // Increment bars held
+                    
+                    // Fast scalping exit conditions
+                    let profit_target = state.get_profit_target();
+                    let entry_price = state.entry_price.unwrap_or(close);
+                    let current_pnl = if state.qty_open > 0.0 {
+                        (close - entry_price) / entry_price
+                    } else {
+                        (entry_price - close) / entry_price
+                    };
+                    
+                    // Exit conditions:
+                    // 1. Profit target reached (0.5x ATR or 0.2%)
+                    // 2. Small loss to avoid big drawdowns
+                    // 3. Hold too long (scalping - max 5 bars)
+                    // 4. Original VORTEX exit signal
+                    
+                    let exit_reason = if current_pnl >= profit_target {
+                        Some(ExitReason::TakeProfit)
+                    } else if current_pnl <= -0.001 { // 0.1% max loss
+                        Some(ExitReason::StopLoss)
+                    } else if state.bars_held >= 5 { // Max 5 bars for scalping
+                        Some(ExitReason::TimeStop)
+                    } else {
+                        // Check original VORTEX exit
+                        if let Some(ref pos) = state.engine.position {
+                            let z = state.engine.ou.last_z().unwrap_or(0.0);
+                            state.engine.check_exit(close, z, pos.bars_held)
                         } else {
-                            (false, OrderSide::Buy, 0.0, None)
+                            None
                         }
+                    };
+                    
+                    if let Some(reason) = exit_reason {
+                        let side = if state.qty_open > 0.0 { OrderSide::Sell } else { OrderSide::Buy };
+                        let qty = state.qty_open.abs();
+                        let record = TradeRecord {
+                            instrument_id,
+                            direction: if state.qty_open > 0.0 { 1 } else { -1 },
+                            entry_price,
+                            exit_price: close,
+                            pnl_frac: current_pnl,
+                            exit_reason: reason,
+                            bars_held: state.bars_held,
+                        };
+                        (true, side, qty, Some(record))
                     } else {
                         (false, OrderSide::Buy, 0.0, None)
                     }
