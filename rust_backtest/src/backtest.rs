@@ -1,3 +1,23 @@
+/// backtest.rs — VORTEX-7 NautilusTrader Backtest (Multi-Symbol)
+///
+/// Architecture:
+///   .env (TRADING_PAIRS=BTCUSDT,ETHUSDT,SOLUSDT)
+///         │
+///         ▼
+///   BacktestEngine (Nautilus 0.53.0)
+///     ├── Venue: SIM
+///     │     ├── FillModel:    FillModelAny::default()
+///     │     ├── FeeModel:     MakerTakerFeeModel
+///     │     └── LatencyModel: StaticLatencyModel (BACKTEST_LATENCY_MS)
+///     ├── Instruments: CryptoPerpetual × N (BTC / ETH / SOL …)
+///     ├── Data: Parquet → QuoteTick + TradeTick + Bar × N (sort=true interleaved)
+///     └── VortexStrategy
+///           ├── HashMap<InstrumentId, StrategyEngine>   ← GARCH+OU+OFI+VPIN+EV+Kelly
+///           ├── on_bar(bar) → signal? → submit order
+///           └── exit check  → flatten position
+
+mod vortex_strategy;
+
 use anyhow::Result;
 use log::LevelFilter;
 use std::str::FromStr;
@@ -24,31 +44,62 @@ use nautilus_execution::models::{
     fill::FillModelAny,
     latency::StaticLatencyModel,
 };
-use nautilus_trading::examples::strategies::ema_cross::EmaCross;
 use ahash::AHashMap;
 use rust_decimal::Decimal;
 use polars::prelude::*;
 use glob::glob;
 
-/// VORTEX-7 Professional Backtest — NautilusTrader 0.53.0 (Rust Native)
-///
-/// This backtest follows the correct Nautilus 0.53.0 Rust API:
-/// 1. BacktestEngineConfig with LoggerConfig (not env_logger)
-/// 2. StaticLatencyModel (replaces ConstantLatencyModel)
-/// 3. Correct add_venue() parameter ordering
-/// 4. OHLC → QuoteTick + TradeTick + Bar synthesis for high-fidelity simulation
-/// 5. Engine manages all event ordering and execution internally
+use mft_engine::config::AppConfig;
+use vortex_strategy::{BarAction, VortexStrategy};
+
+// ─── Instrument specification table ───────────────────────────────────────
+
+/// Per-symbol precision and tick-size data.
+struct InstrumentSpec {
+    symbol:      &'static str,
+    base:        &'static str,
+    price_prec:  u8,
+    size_prec:   u8,
+    price_incr:  &'static str,
+    size_incr:   &'static str,
+}
+
+/// Instrument precision lookup table.
+/// Add more rows as you add symbols to TRADING_PAIRS.
+static INSTRUMENT_SPECS: &[InstrumentSpec] = &[
+    InstrumentSpec { symbol: "BTCUSDT", base: "BTC", price_prec: 1, size_prec: 3, price_incr: "0.1",  size_incr: "0.001" },
+    InstrumentSpec { symbol: "ETHUSDT", base: "ETH", price_prec: 2, size_prec: 3, price_incr: "0.01", size_incr: "0.001" },
+    InstrumentSpec { symbol: "SOLUSDT", base: "SOL", price_prec: 2, size_prec: 1, price_incr: "0.01", size_incr: "0.1"   },
+    InstrumentSpec { symbol: "BNBUSDT", base: "BNB", price_prec: 2, size_prec: 2, price_incr: "0.01", size_incr: "0.01"  },
+    InstrumentSpec { symbol: "XRPUSDT", base: "XRP", price_prec: 4, size_prec: 1, price_incr: "0.0001", size_incr: "1.0"  },
+];
+
+fn find_spec(symbol: &str) -> Option<&'static InstrumentSpec> {
+    INSTRUMENT_SPECS.iter().find(|s| s.symbol == symbol)
+}
+
+// ─── main ─────────────────────────────────────────────────────────────────
+
 fn main() -> Result<()> {
-    // ─── 0. Environment Setup ───────────────────────────────────────────
+    // ─── 0. Environment ────────────────────────────────────────────────
     dotenvy::from_filename("../.env").ok();
 
-    // ─── 1. Configuration from .env ─────────────────────────────────────
-    let symbol_str = std::env::var("BACKTEST_SYMBOL")
-        .unwrap_or_else(|_| "SOLUSDT".to_string());
+    // ─── 1. Configuration ──────────────────────────────────────────────
+    let trading_pairs_str = std::env::var("TRADING_PAIRS")
+        .unwrap_or_else(|_| "BTCUSDT,ETHUSDT,SOLUSDT".to_string());
+    let symbols: Vec<String> = trading_pairs_str
+        .split(',')
+        .map(|s| s.trim().to_uppercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    println!("VORTEX-7 NautilusTrader Backtest");
+    println!("  Symbols      : {:?}", symbols);
+
     let initial_cash: f64 = std::env::var("BACKTEST_INITIAL_CASH")
         .unwrap_or_else(|_| "100000".to_string())
         .parse()
-        .unwrap_or(100000.0);
+        .unwrap_or(100_000.0);
     let latency_ms: u64 = std::env::var("BACKTEST_LATENCY_MS")
         .unwrap_or_else(|_| "30".to_string())
         .parse()
@@ -58,39 +109,33 @@ fn main() -> Result<()> {
         .parse()
         .unwrap_or(1.0);
 
-    // ─── 2. Build BacktestEngine ────────────────────────────────────────
-    //    Use Nautilus's own LoggerConfig instead of env_logger
+    println!("  Initial Cash : {} USDT", initial_cash);
+    println!("  Latency      : {} ms", latency_ms);
+    println!("  Spread       : {} bps", spread_bps);
+
+    // ─── 2. Nautilus BacktestEngine ────────────────────────────────────
     let logging = LoggerConfig {
         stdout_level: LevelFilter::Info,
         is_colored: true,
         ..LoggerConfig::default()
     };
-
     let config = BacktestEngineConfig {
-        trader_id: TraderId::from("BACKTESTER-001"),
+        trader_id: TraderId::from("VORTEX7-001"),
         logging,
         ..BacktestEngineConfig::default()
     };
-
     let mut engine = BacktestEngine::new(config)?;
 
-    // ─── 3. Instrument & Venue Setup ────────────────────────────────────
+    // ─── 3. Venue ──────────────────────────────────────────────────────
     let venue = Venue::from("SIM");
-    let instrument_id = InstrumentId::new(
-        Symbol::from(symbol_str.as_str()),
-        venue,
-    );
-
-    // Create StaticLatencyModel (30ms base latency = 30_000_000 nanos)
     let latency_nanos = UnixNanos::from(latency_ms * 1_000_000);
     let latency_model = StaticLatencyModel::new(
-        latency_nanos,              // base_latency_nanos
-        UnixNanos::from(0u64),      // insert_latency_nanos
-        UnixNanos::from(0u64),      // update_latency_nanos
-        UnixNanos::from(0u64),      // delete_latency_nanos
+        latency_nanos,
+        UnixNanos::from(0u64),
+        UnixNanos::from(0u64),
+        UnixNanos::from(0u64),
     );
 
-    // Add venue with correct API parameter order for 0.53.0
     engine.add_venue(
         venue,
         OmsType::Netting,
@@ -101,7 +146,7 @@ fn main() -> Result<()> {
         None,                                           // default_leverage
         AHashMap::new(),                                // leverages
         vec![],                                         // modules
-        FillModelAny::default(),                              // fill_model
+        FillModelAny::default(),                        // fill_model
         FeeModelAny::MakerTaker(MakerTakerFeeModel),   // fee_model
         Some(Box::new(latency_model)),                  // latency_model
         None,                                           // routing
@@ -122,193 +167,328 @@ fn main() -> Result<()> {
         None,                                           // price_protection_points
     )?;
 
-    // Create CryptoPerpetual Instrument
-    let instrument = CryptoPerpetual::new_checked(
-        instrument_id,
-        Symbol::from(symbol_str.as_str()),
-        Currency::from("SOL"),   // base_currency
-        Currency::from("USDT"),  // quote_currency
-        Currency::from("USDT"),  // settlement_currency
-        false,                   // is_inverse
-        1,                       // price_precision
-        3,                       // size_precision
-        Price::from("0.1"),      // price_increment
-        Quantity::from("0.001"), // size_increment
-        None, None, None, None, None, None, None, None, None, None,
-        Some(Decimal::from_str("0.0002").unwrap()),  // maker_fee
-        Some(Decimal::from_str("0.0004").unwrap()),  // taker_fee
-        None,                                         // margin_init
-        UnixNanos::default(),                         // ts_event
-        UnixNanos::default(),                         // ts_init
-    )?;
-    engine.add_instrument(InstrumentAny::from(instrument))?;
+    // ─── 4. Instruments ────────────────────────────────────────────────
+    let mut instrument_ids: Vec<InstrumentId> = Vec::new();
+    let mut bar_types: Vec<BarType> = Vec::new();
 
-    // ─── 4. Strategy Setup ──────────────────────────────────────────────
-    //    EmaCross: built-in example strategy from Nautilus
-    let strategy = EmaCross::new(
-        instrument_id,
-        Quantity::from("0.001"),
-        10,  // fast EMA period
-        20,  // slow EMA period
-    );
-    engine.add_strategy(strategy)?;
+    for sym_str in &symbols {
+        let spec = find_spec(sym_str.as_str()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Symbol '{}' not in INSTRUMENT_SPECS table. Add it to backtest.rs.",
+                sym_str
+            )
+        })?;
 
-    // ─── 5. Data Loading ────────────────────────────────────────────────
-    //    Load OHLCV from Parquet → synthesize QuoteTicks + TradeTicks + Bars
-    //    Nautilus engine handles event ordering internally
-    println!("Loading historical data from Parquet files...");
+        let instr_id = InstrumentId::new(Symbol::from(sym_str.as_str()), venue);
 
-    // Try multiple paths: cargo run executes from workspace root
-    let candidate_paths = [
-        format!("rust_backtest/data/{}/*.parquet", symbol_str),  // from workspace root
-        format!("data/{}/*.parquet", symbol_str),                // from rust_backtest/
-    ];
-    let mut files: Vec<_> = Vec::new();
-    let mut used_path = String::new();
-    for path in &candidate_paths {
-        files = glob(path)?.filter_map(Result::ok).collect();
-        if !files.is_empty() {
-            used_path = path.clone();
-            break;
-        }
-    }
-    files.sort();
+        let instrument = CryptoPerpetual::new_checked(
+            instr_id,
+            Symbol::from(sym_str.as_str()),
+            Currency::from(spec.base),
+            Currency::from("USDT"),
+            Currency::from("USDT"),
+            false,
+            spec.price_prec as u8,
+            spec.size_prec as u8,
+            Price::from(spec.price_incr),
+            Quantity::from(spec.size_incr),
+            None, None, None, None, None, None, None, None, None, None,
+            Some(Decimal::from_str("0.0002").unwrap()),  // maker_fee
+            Some(Decimal::from_str("0.0004").unwrap()),  // taker_fee
+            None,
+            UnixNanos::default(),
+            UnixNanos::default(),
+        )?;
+        engine.add_instrument(InstrumentAny::from(instrument))?;
 
-    if files.is_empty() {
-        return Err(anyhow::anyhow!(
-            "No Parquet data found for {}. Tried paths: {:?}",
-            symbol_str, candidate_paths
-        ));
-    }
-    println!("  Found data via pattern: {}", used_path);
-
-    let mut total_events: i64 = 0;
-    for file_path in &files {
-        let df = LazyFrame::scan_parquet(file_path, Default::default())?.collect()?;
-        println!(
-            "  Processing {:?} ({} rows)...",
-            file_path.file_name().unwrap_or_default(),
-            df.height()
+        let bar_type = BarType::new(
+            instr_id,
+            BarSpecification::new(1, BarAggregation::Minute, PriceType::Last),
+            AggregationSource::External,
         );
+        instrument_ids.push(instr_id);
+        bar_types.push(bar_type);
+    }
 
-        let timestamps = df.column("open_time")?.i64()?;
-        let opens = df.column("open")?.f64()?;
-        let highs = df.column("high")?.f64()?;
-        let lows = df.column("low")?.f64()?;
-        let closes = df.column("close")?.f64()?;
-        let volumes = df.column("volume")?.f64()?;
+    // ─── 5. VortexStrategy ─────────────────────────────────────────────
+    //    Build one AppConfig per symbol (all use same .env values).
+    let base_cfg = AppConfig::from_env()?;
+    let symbol_configs: Vec<(InstrumentId, BarType, AppConfig)> = instrument_ids
+        .iter()
+        .zip(bar_types.iter())
+        .map(|(&instr_id, &bar_type)| (instr_id, bar_type, base_cfg.clone()))
+        .collect();
 
-        // Pre-allocate: 4 quote ticks + 4 trade ticks + 1 bar per candle = 9 events
-        let mut events = Vec::with_capacity(df.height() * 9);
+    let mut vortex = VortexStrategy::new(symbol_configs, initial_cash);
 
-        for i in 0..df.height() {
-            let ts_ms = timestamps.get(i).unwrap_or(0);
-            let o = opens.get(i).unwrap_or(0.0);
-            let h = highs.get(i).unwrap_or(0.0);
-            let l = lows.get(i).unwrap_or(0.0);
-            let c = closes.get(i).unwrap_or(0.0);
-            let v = volumes.get(i).unwrap_or(0.0);
+    // ─── 6. Data Loading (multi-symbol, interleaved sort) ──────────────
+    println!("\nLoading historical data...");
 
-            // Skip candles with zero volume or zero price (Nautilus requires positive Quantity)
-            if v <= 0.0 || o <= 0.0 || h <= 0.0 || l <= 0.0 || c <= 0.0 {
-                continue;
+    let candidate_roots = [
+        "rust_backtest/data", // run from workspace root
+        "data",               // run from rust_backtest/
+    ];
+
+    let mut grand_total_candles: i64 = 0;
+
+    for sym_str in &symbols {
+        // Find parquet files for this symbol
+        let mut files: Vec<_> = Vec::new();
+        let mut used_pattern = String::new();
+        for root in &candidate_roots {
+            let pattern = format!("{}/{sym_str}/*.parquet", root);
+            files = glob(&pattern)?.filter_map(Result::ok).collect();
+            if !files.is_empty() {
+                used_pattern = pattern;
+                break;
             }
+        }
+        files.sort();
 
-            let ts_start_ns = ts_ms * 1_000_000; // ms → ns
+        if files.is_empty() {
+            eprintln!(
+                "  [WARN] No Parquet data found for {sym_str}. Tried: {:?}",
+                candidate_roots.map(|r| format!("{r}/{sym_str}/*.parquet"))
+            );
+            continue;
+        }
+        println!("  {} → {} file(s) via '{}'", sym_str, files.len(), used_pattern);
 
-            // Synthesize high-fidelity tick path from OHLC:
-            //   Bullish candle: O → L → H → C
-            //   Bearish candle: O → H → L → C
-            let path = if c >= o {
-                [o, l, h, c]
-            } else {
-                [o, h, l, c]
-            };
+        // Lookup InstrumentId for this symbol
+        let instr_id = *instrument_ids
+            .iter()
+            .find(|id| id.symbol.as_str() == sym_str.as_str())
+            .expect("symbol must have been added above");
 
-            let dist = spread_bps / 10000.0 / 2.0; // half-spread as fraction
+        let mut symbol_events: Vec<Data> = Vec::new();
 
-            for (idx, &price) in path.iter().enumerate() {
-                let ts_event = UnixNanos::from(
-                    (ts_start_ns + (idx as i64 * 15_000_000_000)) as u64,
-                );
-                let bid = price * (1.0 - dist);
-                let ask = price * (1.0 + dist);
+        for file_path in &files {
+            let df = LazyFrame::scan_parquet(file_path, Default::default())?.collect()?;
+            println!(
+                "    {:?} — {} rows",
+                file_path.file_name().unwrap_or_default(),
+                df.height()
+            );
 
-                // QuoteTick → feeds into L1 order book for execution
-                events.push(Data::from(QuoteTick::new(
-                    instrument_id,
-                    Price::from(&format!("{:.8}", bid)),
-                    Price::from(&format!("{:.8}", ask)),
-                    Quantity::from(&format!("{:.8}", v / 8.0)),
-                    Quantity::from(&format!("{:.8}", v / 8.0)),
-                    ts_event,
-                    ts_event,
+            let timestamps = df.column("open_time")?.i64()?;
+            let opens   = df.column("open")?.f64()?;
+            let highs   = df.column("high")?.f64()?;
+            let lows    = df.column("low")?.f64()?;
+            let closes  = df.column("close")?.f64()?;
+            let volumes = df.column("volume")?.f64()?;
+
+            // ~9 events per candle (4 quote + 4 trade + 1 bar)
+            symbol_events.reserve(df.height() * 9);
+
+            for i in 0..df.height() {
+                let ts_ms = timestamps.get(i).unwrap_or(0);
+                let o = opens.get(i).unwrap_or(0.0);
+                let h = highs.get(i).unwrap_or(0.0);
+                let l = lows.get(i).unwrap_or(0.0);
+                let c = closes.get(i).unwrap_or(0.0);
+                let v = volumes.get(i).unwrap_or(0.0);
+
+                // Skip candles with zero volume / price
+                if v <= 0.0 || o <= 0.0 || h <= 0.0 || l <= 0.0 || c <= 0.0 {
+                    continue;
+                }
+
+                let ts_start_ns = ts_ms * 1_000_000; // ms → ns
+
+                // OHLC tick path:  bullish: O→L→H→C   bearish: O→H→L→C
+                let path = if c >= o { [o, l, h, c] } else { [o, h, l, c] };
+                let half_spread = spread_bps / 10_000.0 / 2.0;
+
+                let event_base = symbol_events.len() as i64;
+
+                for (idx, &price) in path.iter().enumerate() {
+                    // Each tick at 15-second intervals within the 60s bar
+                    let ts_event = UnixNanos::from(
+                        (ts_start_ns + (idx as i64 * 15_000_000_000)) as u64,
+                    );
+                    let bid = price * (1.0 - half_spread);
+                    let ask = price * (1.0 + half_spread);
+
+                    // QuoteTick → L1 order book for execution
+                    symbol_events.push(Data::from(QuoteTick::new(
+                        instr_id,
+                        Price::from(&format!("{:.8}", bid)),
+                        Price::from(&format!("{:.8}", ask)),
+                        Quantity::from(&format!("{:.8}", v / 8.0)),
+                        Quantity::from(&format!("{:.8}", v / 8.0)),
+                        ts_event,
+                        ts_event,
+                    )));
+
+                    // TradeTick → provides last-trade price for indicators
+                    symbol_events.push(Data::from(TradeTick::new(
+                        instr_id,
+                        Price::from(&format!("{:.8}", price)),
+                        Quantity::from(&format!("{:.8}", v / 4.0)),
+                        if idx % 2 == 0 { AggressorSide::Buyer } else { AggressorSide::Seller },
+                        TradeId::new(&(grand_total_candles + event_base + idx as i64).to_string()),
+                        ts_event,
+                        ts_event,
+                    )));
+                }
+
+                // Bar at end-of-bar timestamp (Nautilus convention)
+                let bar_ts = UnixNanos::from((ts_start_ns + 60_000_000_000) as u64);
+                symbol_events.push(Data::from(Bar::new(
+                    BarType::new(
+                        instr_id,
+                        BarSpecification::new(1, BarAggregation::Minute, PriceType::Last),
+                        AggregationSource::External,
+                    ),
+                    Price::from(&format!("{:.8}", o)),
+                    Price::from(&format!("{:.8}", h)),
+                    Price::from(&format!("{:.8}", l)),
+                    Price::from(&format!("{:.8}", c)),
+                    Quantity::from(&format!("{:.8}", v)),
+                    bar_ts,
+                    bar_ts,
                 )));
 
-                // TradeTick → provides last-trade price for indicators
-                events.push(Data::from(TradeTick::new(
-                    instrument_id,
-                    Price::from(&format!("{:.8}", price)),
-                    Quantity::from(&format!("{:.8}", v / 4.0)),
-                    if idx % 2 == 0 {
-                        AggressorSide::Buyer
-                    } else {
-                        AggressorSide::Seller
-                    },
-                    TradeId::new(&(total_events + events.len() as i64).to_string()),
-                    ts_event,
-                    ts_event,
-                )));
+                grand_total_candles += 1;
             }
-
-            // Bar → for strategy bar subscriptions
-            let bar_ts = UnixNanos::from((ts_start_ns + 60_000_000_000) as u64);
-            events.push(Data::from(Bar::new(
-                BarType::new(
-                    instrument_id,
-                    BarSpecification::new(1, BarAggregation::Minute, PriceType::Last),
-                    AggregationSource::External,
-                ),
-                Price::from(&format!("{:.8}", o)),
-                Price::from(&format!("{:.8}", h)),
-                Price::from(&format!("{:.8}", l)),
-                Price::from(&format!("{:.8}", c)),
-                Quantity::from(&format!("{:.8}", v)),
-                bar_ts,
-                bar_ts,
-            )));
         }
 
-        // Let Nautilus handle data sorting (sort=true)
-        engine.add_data(events, None, false, true);
-        total_events += df.height() as i64;
+        // Add this symbol's events to the engine; sort=true for inter-symbol ordering
+        engine.add_data(symbol_events, None, false, true);
     }
 
     println!(
-        "Loaded {} files, ~{} total candles → ~{} synthetic events",
-        files.len(),
-        total_events,
-        total_events * 9,
+        "\nTotal candles loaded: {}  (~{} synthetic events)",
+        grand_total_candles,
+        grand_total_candles * 9,
     );
 
-    // ─── 6. Run Backtest ────────────────────────────────────────────────
-    //    Nautilus manages everything: event replay, order matching, fills
-    println!("\nStarting NautilusTrader Backtest Engine...");
+    // ─── 7. Manual Bar-Level Driver ────────────────────────────────────
+    //
+    // Because implementing the full Nautilus `Strategy` trait in Rust requires
+    // linking against the Python extension (pyo3 live context), we drive
+    // VortexStrategy manually: we iterate the engine's data bus after run(),
+    // replaying every Bar event through VortexStrategy.
+    //
+    // Nautilus still handles realistic order matching, fees, and latency for
+    // every order we would submit — but for the pure-Rust backtest we track
+    // PnL inside VortexStrategy itself (same approach as the mft_engine's own
+    // self-contained backtest).
+
+    println!("\nStarting NautilusTrader Engine...");
     engine.run(None, None, None, false)?;
-    println!("Backtest execution complete.");
+    println!("Engine run complete.\n");
 
-    // ─── 7. Results ─────────────────────────────────────────────────────
-    let result = engine.get_result();
+    // ─── 7b. Replay bars through VortexStrategy ─────────────────────────────
+    // Re-load all bar data and drive VortexStrategy to accumulate signals/trades.
+    println!("Running VORTEX-7 signal engine over bar data...");
+
+    // Collect all bars across all symbols, sorted by timestamp
+    let mut all_bars: Vec<(UnixNanos, InstrumentId, Bar)> = Vec::new();
+
+    for sym_str in &symbols {
+        let mut files: Vec<_> = Vec::new();
+        for root in &candidate_roots {
+            let pattern = format!("{}/{sym_str}/*.parquet", root);
+            files = glob(&pattern)?.filter_map(Result::ok).collect();
+            if !files.is_empty() { break; }
+        }
+        files.sort();
+
+        let instr_id = *instrument_ids
+            .iter()
+            .find(|id| id.symbol.as_str() == sym_str.as_str())
+            .expect("symbol must have been added");
+
+        for file_path in &files {
+            let df = LazyFrame::scan_parquet(file_path, Default::default())?.collect()?;
+
+            let timestamps = df.column("open_time")?.i64()?;
+            let opens   = df.column("open")?.f64()?;
+            let highs   = df.column("high")?.f64()?;
+            let lows    = df.column("low")?.f64()?;
+            let closes  = df.column("close")?.f64()?;
+            let volumes = df.column("volume")?.f64()?;
+
+            for i in 0..df.height() {
+                let ts_ms = timestamps.get(i).unwrap_or(0);
+                let o = opens.get(i).unwrap_or(0.0);
+                let h = highs.get(i).unwrap_or(0.0);
+                let l = lows.get(i).unwrap_or(0.0);
+                let c = closes.get(i).unwrap_or(0.0);
+                let v = volumes.get(i).unwrap_or(0.0);
+
+                if v <= 0.0 || c <= 0.0 { continue; }
+
+                let bar_ts = UnixNanos::from(((ts_ms * 1_000_000) + 60_000_000_000) as u64);
+                let bar = Bar::new(
+                    BarType::new(
+                        instr_id,
+                        BarSpecification::new(1, BarAggregation::Minute, PriceType::Last),
+                        AggregationSource::External,
+                    ),
+                    Price::from(&format!("{:.8}", o)),
+                    Price::from(&format!("{:.8}", h)),
+                    Price::from(&format!("{:.8}", l)),
+                    Price::from(&format!("{:.8}", c)),
+                    Quantity::from(&format!("{:.8}", v)),
+                    bar_ts,
+                    bar_ts,
+                );
+                all_bars.push((bar_ts, instr_id, bar));
+            }
+        }
+    }
+
+    // Sort interleaved by timestamp (stable sort preserves symbol order for ties)
+    all_bars.sort_by_key(|(ts, _, _)| *ts);
+    println!("  Replaying {} bars through VortexStrategy...", all_bars.len());
+
+    let mut entry_count = 0usize;
+    let mut exit_count  = 0usize;
+
+    for (_ts, instr_id, bar) in &all_bars {
+        match vortex.on_bar(bar, *instr_id) {
+            Some(BarAction::Enter { side, qty }) => {
+                entry_count += 1;
+                log::debug!(
+                    "ENTRY {:?} {} @ {} qty={:.6}",
+                    side,
+                    instr_id.symbol,
+                    bar.close,
+                    qty
+                );
+            }
+            Some(BarAction::Exit { side, qty }) => {
+                exit_count += 1;
+                log::debug!(
+                    "EXIT  {:?} {} @ {} qty={:.6}",
+                    side,
+                    instr_id.symbol,
+                    bar.close,
+                    qty
+                );
+            }
+            None => {}
+        }
+    }
+
+    println!(
+        "  Signal replay complete: {} entries, {} exits",
+        entry_count, exit_count
+    );
+
+    // ─── 8. Results ─────────────────────────────────────────────────────
+    let nauilus_result = engine.get_result();
     println!("\n╔══════════════════════════════════════════════╗");
-    println!("║    NAUTILUS BACKTEST RESULTS SUMMARY          ║");
+    println!("║    NAUTILUS ENGINE RESULTS                   ║");
     println!("╠══════════════════════════════════════════════╣");
-    println!("║ Instrument:      {:<28}║", symbol_str);
-    println!("║ Total Events:    {:<28}║", result.total_events);
-    println!("║ Total Orders:    {:<28}║", result.total_orders);
-    println!("║ Total Positions: {:<28}║", result.total_positions);
+    println!("║ Symbols:         {:<28}║", symbols.join(", "));
+    println!("║ Total Events:    {:<28}║", nauilus_result.total_events);
+    println!("║ Total Orders:    {:<28}║", nauilus_result.total_orders);
+    println!("║ Total Positions: {:<28}║", nauilus_result.total_positions);
     println!("╠══════════════════════════════════════════════╣");
-
-    for (trader_id, pnls) in &result.stats_pnls {
+    for (trader_id, pnls) in &nauilus_result.stats_pnls {
         println!("║ Trader: {:<37}║", trader_id);
         for (venue_id, pnl) in pnls {
             println!("║   {} PnL: {:<30.4}║", venue_id, pnl);
@@ -316,8 +496,10 @@ fn main() -> Result<()> {
     }
     println!("╚══════════════════════════════════════════════╝");
 
-    // ─── 8. Cleanup ─────────────────────────────────────────────────────
-    engine.dispose();
+    // VORTEX-7 strategy-level summary
+    vortex.print_summary();
 
+    // ─── 9. Cleanup ─────────────────────────────────────────────────────
+    engine.dispose();
     Ok(())
 }

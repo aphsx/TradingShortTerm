@@ -211,7 +211,17 @@ impl OuSignalEngine {
         let prob_ok = self.p_continuation(price).map_or(false, |p| p < prob_threshold);
         z_ok || prob_ok
     }
+
+    /// Return the Z-score of the *last pushed price* without modifying state.
+    ///
+    /// Useful when `push()` was already called this bar (e.g. via `on_bar`)
+    /// and you need to read the current Z-score without double-counting.
+    pub fn last_z(&self) -> Option<f64> {
+        let last_price = *self.price_buf.last()?;
+        self.z_score(last_price)
+    }
 }
+
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
