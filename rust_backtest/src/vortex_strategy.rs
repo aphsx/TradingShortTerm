@@ -265,31 +265,7 @@ impl VortexStrategy {
         } else {
             0.0
         };
-
-        println!("\n╔══════════════════════════════════════════════════════════╗");
-        println!("║           VORTEX-7  STRATEGY  SUMMARY                   ║");
-        println!("╠══════════════════════════════════════════════════════════╣");
-        println!("║ Total Closed Trades : {:<36}║", total);
-        println!("║ Win Rate            : {:<35.2}%║", win_rate * 100.0);
-        println!("║ Avg Win  (frac)     : {:<35.6}║", avg_win);
-        println!("║ Avg Loss (frac)     : {:<35.6}║", avg_loss);
-        println!("╠══════════════════════════════════════════════════════════╣");
-
-        // Per-symbol breakdown
-        let mut per_symbol: AHashMap<&str, (usize, f64)> = AHashMap::new();
-        for t in &self.trade_log {
-            let sym = t.instrument_id.symbol.as_str();
-            let entry = per_symbol.entry(sym).or_insert((0, 0.0));
-            entry.0 += 1;
-            entry.1 += t.pnl_frac;
-        }
-        let mut symbols: Vec<(&str, (usize, f64))> = per_symbol.into_iter().collect();
-        symbols.sort_by(|a, b| a.0.cmp(b.0));
-        for (sym, (n, total_pnl)) in symbols {
-            println!("║  {:10} trades={:<5} total_pnl={:<18.6}║", sym, n, total_pnl);
-        }
-
-        println!("╚══════════════════════════════════════════════════════════╝");
+        // Removed custom reporting - only Nautilus logs remain
     }
 }
 
