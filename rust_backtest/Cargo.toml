@@ -13,7 +13,7 @@ path = "src/fetch_data.rs"
 
 [dependencies]
 
-# Nautilus for realistic backtest
+# Nautilus for realistic backtest (0.53.0 — latest Rust crate version)
 nautilus-backtest = "0.53.0"
 nautilus-execution = "0.53.0"
 nautilus-model = "0.53.0"
@@ -25,7 +25,7 @@ nautilus-common = "0.53.0"
 # Core dependencies
 ahash = "0.8"
 anyhow = "1.0"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["full"] }       # still needed by fetch_data
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -38,5 +38,3 @@ glob = "0.3"
 rust_decimal = "1.32"
 log = "0.4"
 statrs = "0.17"
-
-
