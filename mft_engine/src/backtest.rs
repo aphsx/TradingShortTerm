@@ -63,13 +63,6 @@ pub fn run_backtest(
     let mut engine = StrategyEngine::new(cfg);
     let mut equity_curve: Vec<f64> = Vec::with_capacity(klines.len());
 
-    info!(
-        "═══════════════════════════════════════════════"
-    );
-    info!("  MFT ENGINE BACKTEST  — {} bars", klines.len());
-    info!(
-        "═══════════════════════════════════════════════"
-    );
 
     // ── Main event loop ───────────────────────────────────────────────────
     for (i, bar) in klines.iter().enumerate() {
@@ -126,7 +119,6 @@ pub fn run_backtest(
         bt_cfg.bars_per_year,
     );
 
-    info!("{}", report);
     report
 }
 

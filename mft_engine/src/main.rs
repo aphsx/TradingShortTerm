@@ -93,10 +93,7 @@ async fn main() -> Result<()> {
 
     // ── Run Backtest ──────────────────────────────────────────────────────
     let bt_cfg = BacktestConfig { verbose: true, bars_per_year };
-    let report = run_backtest(&klines, cfg, bt_cfg);
-
-    // ── Print Report ──────────────────────────────────────────────────────
-    println!("\n{}", report);
+    let _report = run_backtest(&klines, cfg, bt_cfg);
 
     Ok(())
 }

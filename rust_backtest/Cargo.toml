@@ -20,6 +20,7 @@ nautilus-model = "0.53.0"
 nautilus-core = "0.53.0"
 nautilus-data = "0.53.0"
 nautilus-trading = { version = "0.53.0", features = ["examples"] }
+nautilus-analysis = "0.53.0"
 nautilus-common = "0.53.0"
 
 # Core dependencies

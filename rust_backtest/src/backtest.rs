@@ -326,6 +326,43 @@ fn main() -> Result<()> {
     println!("║ Total Orders:    {:<28}║", result.total_orders);
     println!("║ Total Positions: {:<28}║", result.total_positions);
     println!("╚══════════════════════════════════════════════╝");
+
+    // ─── 9. Nautilus Portfolio Analysis ────────────────────────────────
+    use nautilus_analysis::analyzer::PortfolioAnalyzer;
+    
+    let mut analyzer = PortfolioAnalyzer::new();
+    
+    // Get account and positions from engine
+    if let Some(account) = engine.cache().account(&nautilus_model::identifiers::AccountId::from("SIM-001")) {
+        let positions: Vec<&nautilus_model::position::Position> = engine.cache().positions(&nautilus_model::identifiers::Venue::from("SIM"))
+            .iter()
+            .collect();
+        
+        // Calculate statistics using Nautilus PortfolioAnalyzer
+        analyzer.calculate_statistics(account, &positions);
+        
+        // Get P&L information
+        if let Some(currency) = account.base_currency() {
+            if let Ok(total_pnl) = analyzer.total_pnl(Some(currency), None) {
+                println!("Total P&L: {:.2} {}", total_pnl, currency.code);
+            }
+            
+            if let Ok(pnl_pct) = analyzer.total_pnl_percentage(Some(currency), None) {
+                println!("P&L %: {:.2}%", pnl_pct * 100.0);
+            }
+            
+            if let Ok(pnl_stats) = analyzer.get_performance_stats_pnls(Some(currency), None) {
+                for (stat_name, value) in pnl_stats {
+                    println!("{}: {:.2}", stat_name, value);
+                }
+            }
+        }
+        
+        println!("Account Balance: {}", account.balance_total());
+        println!("Free Balance: {}", account.balance_free());
+        println!("Locked Balance: {}", account.balance_locked());
+        println!("Positions: {}", positions.len());
+    }
     
     // ─── 9. Cleanup ─────────────────────────────────────────────────────
     // Proper NautilusTrader disposal sequence

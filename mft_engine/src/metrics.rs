@@ -59,26 +59,6 @@ pub struct PerfReport {
     pub final_equity:   f64,
 }
 
-impl std::fmt::Display for PerfReport {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "════════════════════════════════════════════")?;
-        writeln!(f, "  MFT ENGINE — BACKTEST PERFORMANCE REPORT")?;
-        writeln!(f, "════════════════════════════════════════════")?;
-        writeln!(f, "  Trades         : {}", self.n_trades)?;
-        writeln!(f, "  Win Rate       : {:.2}%", self.win_rate * 100.0)?;
-        writeln!(f, "  Avg Win        : {:.4}%", self.avg_win * 100.0)?;
-        writeln!(f, "  Avg Loss       : {:.4}%", self.avg_loss * 100.0)?;
-        writeln!(f, "  Profit Factor  : {:.3}", self.profit_factor)?;
-        writeln!(f, "  Total Return   : {:.2}%", self.total_return * 100.0)?;
-        writeln!(f, "  Sharpe Ratio   : {:.3}", self.sharpe)?;
-        writeln!(f, "  Sortino Ratio  : {:.3}", self.sortino)?;
-        writeln!(f, "  Max Drawdown   : {:.2}%", self.max_drawdown * 100.0)?;
-        writeln!(f, "  Calmar Ratio   : {:.3}", self.calmar)?;
-        writeln!(f, "  Initial Equity : ${:.2}", self.initial_equity)?;
-        writeln!(f, "  Final Equity   : ${:.2}", self.final_equity)?;
-        writeln!(f, "════════════════════════════════════════════")
-    }
-}
 
 /// Compute all performance metrics from a list of closed trades and equity curve.
 ///
