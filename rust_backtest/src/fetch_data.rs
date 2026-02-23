@@ -26,22 +26,36 @@ struct BinanceKline {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 1. Load .env
-    dotenvy::dotenv().ok();
+    // 1. Load .env from root directory
+    dotenvy::from_filename("../.env").ok();
 
-    // 2. Get Trading Pairs & URL
+    // 2. Get Trading Pairs & URL from MFT ENGINE config
     let trading_pairs_str = std::env::var("TRADING_PAIRS").unwrap_or_else(|_| "BTCUSDT".to_string());
     let symbols: Vec<&str> = trading_pairs_str.split(',').collect();
     
     let base_url = std::env::var("BINANCE_FUTURES_REST_URL")
-        .unwrap_or_else(|_| "https://fapi.binance.com".to_string());
+        .unwrap_or_else(|_| "https://testnet.binancefuture.com".to_string());
+    
+    // Use MFT ENGINE interval settings
+    let interval = std::env::var("KLINE_INTERVAL").unwrap_or_else(|_| "1m".to_string());
+    let backtest_limit = std::env::var("BACKTEST_LIMIT").unwrap_or_else(|_| "43200".to_string());
+    let limit_bars: i32 = backtest_limit.parse().unwrap_or(43200);
+    
+    // Calculate duration based on interval
+    let duration_hours = match interval.as_str() {
+        "1m" => limit_bars / 60,
+        "3m" => limit_bars * 3 / 60,
+        "5m" => limit_bars * 5 / 60,
+        "15m" => limit_bars * 15 / 60,
+        "30m" => limit_bars * 30 / 60,
+        "1h" => limit_bars,
+        _ => 24, // default to 24 hours if unknown interval
+    };
     
     // 3. Setup Config
     let client = Client::new();
-    let duration_hours = 24; // Download last 24 hours of klines
     let end_time = Utc::now().timestamp_millis();
     let start_time = end_time - (duration_hours * 3600 * 1000);
-    let interval = "1m"; // 1-minute candles
 
     println!("Target Symbols: {:?}", symbols);
     println!("Base URL: {}", base_url);
