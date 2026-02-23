@@ -17,6 +17,7 @@ path = "src/fetch_data.rs"
 nautilus-backtest = "0.53.0"
 nautilus-execution = "0.53.0"
 nautilus-model = "0.53.0"
+nautilus-core = "0.53.0"
 nautilus-trading = { version = "0.53.0", features = ["examples"] }
 
 # Core dependencies
