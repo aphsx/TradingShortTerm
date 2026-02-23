@@ -9,7 +9,7 @@ use nautilus_model::{
     enums::{OmsType, AggressorSide, AccountType, BookType},
     identifiers::{InstrumentId, Symbol, Venue, TradeId},
     instruments::{InstrumentAny, CryptoPerpetual},
-    types::{Price, Quantity, Currency},
+    types::{Price, Quantity, Currency, Money},
     data::{QuoteTick, TradeTick, Data},
 };
 use nautilus_execution::models::fee::FeeModelAny;
@@ -54,6 +54,10 @@ async fn main() -> Result<()> {
         20, // slow ema period
     );
     
+    let initial_cash = std::env::var("BACKTEST_INITIAL_CASH").unwrap_or_else(|_| "100000".to_string());
+    let currency_str = std::env::var("BACKTEST_CURRENCY").unwrap_or_else(|_| "USDT".to_string());
+    let initial_cash_f64: f64 = initial_cash.parse().unwrap_or(100000.0);
+    
     // 4. Setup Nautilus backtest engine
     let config = BacktestEngineConfig::default();
     let mut engine = BacktestEngine::new(config)?;
@@ -62,10 +66,11 @@ async fn main() -> Result<()> {
     engine.add_venue(
         Venue::from("SIM"),
         OmsType::Hedging,
-        AccountType::Cash,
+        AccountType::Margin,
         BookType::L1_MBP, // Correct variant for 0.53.0
-        vec![],
+        vec![Money::new(initial_cash_f64, Currency::from(currency_str.as_str()))],
         None,
+
         None,
         AHashMap::new(),
         vec![],
@@ -82,7 +87,7 @@ async fn main() -> Result<()> {
         Currency::from("BTC"),
         Currency::from("USDT"),
         Currency::from("USDT"),
-        false, 8, 8,
+        false, 1, 3,
         Price::from("0.1"), 
         Quantity::from("0.001"),
         None, None, None, None, None, None, None, None, None, None, None, None, None,
@@ -127,10 +132,10 @@ async fn main() -> Result<()> {
                 let ts_event = UnixNanos::from(((ts_ms * 1_000_000) + (idx as i64 * sub_step_ns)) as u64);
                 
                 let spread = price * 0.0001; 
-                let bid_str = format!("{:.8}", price - spread / 2.0);
-                let ask_str = format!("{:.8}", price + spread / 2.0);
-                let price_str = format!("{:.8}", price);
-                let size_str = format!("{:.8}", volume / 8.0);
+                let bid_str = format!("{:.1}", price - spread / 2.0);
+                let ask_str = format!("{:.1}", price + spread / 2.0);
+                let price_str = format!("{:.1}", price);
+                let size_str = format!("{:.3}", volume / 8.0);
                 
                 let quote = QuoteTick::new(
                     instrument_id.clone(),
@@ -146,7 +151,7 @@ async fn main() -> Result<()> {
                 let trade = TradeTick::new(
                     instrument_id.clone(),
                     Price::from(price_str),
-                    Quantity::from(format!("{:.8}", volume / 4.0)),
+                    Quantity::from(format!("{:.3}", volume / 4.0)),
                     if idx == 1 { AggressorSide::Buyer } else { AggressorSide::Seller },
                     TradeId::new("1"), // Fixed instantiation
                     ts_event,
