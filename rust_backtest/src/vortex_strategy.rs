@@ -17,15 +17,25 @@ use mft_engine::{
     models::ofi::TradeTick as MftTradeTick,
     strategy::{ExitReason, StrategyEngine},
 };
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
+
+use nautilus_trading::strategy::{Strategy, StrategyCore, StrategyConfig};
 use nautilus_model::{
-    enums::OrderSide,
-    identifiers::InstrumentId,
+    enums::{OrderSide, TimeInForce},
+    identifiers::{InstrumentId, StrategyId, TraderId},
     data::{Bar, BarType},
+    orders::market::MarketOrder,
+    orders::OrderAny,
+    types::{Price, Quantity},
 };
+use nautilus_common::actor::{DataActorCore, Actor, Component};
+use anyhow::Result;
 
 // ─── Per-symbol state ──────────────────────────────────────────────────────
 
 /// All mutable state for one symbol during the backtest.
+#[derive(Debug)]
 pub struct SymbolState {
     pub engine: StrategyEngine,
     /// The previous-bar close price, used to compute log-returns.
@@ -49,20 +59,18 @@ impl SymbolState {
 /// Python extension (pyo3) and a live MessageBus, for a pure-Rust backtest
 /// we use a *manual driver loop* inside `backtest.rs` instead of implementing
 /// the trait.  The struct is still self-contained and fully testable.
+#[derive(Debug)]
 pub struct VortexStrategy {
+    pub core: StrategyCore,
     /// Per-symbol engine instances.
     pub states: AHashMap<InstrumentId, SymbolState>,
-    /// Bar types we are subscribed to (one per symbol).
-    pub bar_types: Vec<BarType>,
-    /// Nautilus account equity (synced per-fill in a live driver).
-    pub equity: f64,
-    /// Total trades executed across all symbols.
-    pub total_trades: usize,
     /// Closed trade log (InstrumentId + exit reason + pnl_frac).
     pub trade_log: Vec<TradeRecord>,
+    pub equity: f64,
 }
 
 /// A completed trade record for reporting.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TradeRecord {
     pub instrument_id: InstrumentId,
@@ -77,127 +85,22 @@ pub struct TradeRecord {
 impl VortexStrategy {
     /// Create with a config per symbol.
     pub fn new(
+        strategy_id: StrategyId,
         symbol_configs: Vec<(InstrumentId, BarType, AppConfig)>,
         initial_equity: f64,
     ) -> Self {
         let mut states = AHashMap::new();
-        let mut bar_types = Vec::new();
-
-        for (instr_id, bar_type, cfg) in symbol_configs {
+        for (instr_id, _, cfg) in symbol_configs {
             states.insert(instr_id, SymbolState::new(cfg));
-            bar_types.push(bar_type);
         }
 
+        let config = StrategyConfig::new(strategy_id);
         Self {
+            core: StrategyCore::new(config), 
             states,
-            bar_types,
-            equity: initial_equity,
-            total_trades: 0,
             trade_log: vec![],
+            equity: initial_equity,
         }
-    }
-
-    /// Called by the backtest driver for every incoming bar.
-    ///
-    /// # Returns
-    /// An optional `(OrderSide, quantity_base)` representing the order to
-    /// submit to the Nautilus `SimulatedExchange`.  The driver is responsible
-    /// for actually placing the order via `engine.add_order(...)`.
-    pub fn on_bar(
-        &mut self,
-        bar: &Bar,
-        instrument_id: InstrumentId,
-    ) -> Option<BarAction> {
-        let state = self.states.get_mut(&instrument_id)?;
-
-        let close = bar.close.as_f64();
-        let open  = bar.open.as_f64();
-        let volume = bar.volume.as_f64();
-
-        // Skip zero-volume bars
-        if volume <= 0.0 || close <= 0.0 {
-            state.prev_close = Some(close);
-            return None;
-        }
-
-        // Compute log-return (needs at least one previous bar)
-        let log_return = match state.prev_close {
-            Some(prev) if prev > 0.0 => (close / prev).ln(),
-            _ => {
-                state.prev_close = Some(close);
-                return None; // first bar — no return yet
-            }
-        };
-        state.prev_close = Some(close);
-
-        // Build a synthetic MFT TradeTick from bar data
-        // Heuristic: use volume/2 as net buy/sell depending on direction
-        let is_buy = close >= open;
-        let tick = MftTradeTick {
-            price: close,
-            volume,
-            is_buy,
-            ts_ms: 0, // not needed by StrategyEngine
-        };
-
-        // ── Run the VORTEX-7 engine ─────────────────────────────────────
-        let signal = state.engine.on_bar(close, log_return, &tick);
-
-        // ── Check whether we have an open position that was just closed ──
-        // (StrategyEngine.on_bar closes a position internally before returning
-        //  a new entry signal, so we check after the call)
-        let action = if let Some(sig) = signal {
-            // New entry signal
-            let base_qty = (self.equity * sig.size_frac / close).max(1e-8);
-            let side = if sig.direction == 1 {
-                OrderSide::Buy
-            } else {
-                OrderSide::Sell
-            };
-            state.engine.open_position(sig.clone());
-            state.qty_open = if side == OrderSide::Buy { base_qty } else { -base_qty };
-            self.total_trades += 1;
-            Some(BarAction::Enter { side, qty: base_qty })
-        } else if let Some(ref pos) = state.engine.position {
-            // Position still open; check for an exit triggered externally.
-            // NOTE: on_bar() above already called ou.push(close) internally.
-            // We retrieve the last computed Z-score via the OU signal at the
-            // *current* price WITHOUT pushing again (avoids double-counting).
-            // ou.signal() does not mutate state — it only reads.
-            let z = state.engine.ou.last_z().unwrap_or(0.0);
-            if let Some(reason) = state.engine.check_exit(close, z, pos.bars_held) {
-                let prev_qty = state.qty_open;
-                let prev_dir = if prev_qty > 0.0 { 1i8 } else { -1 };
-                let pnl_frac = (close - pos.signal.entry_price)
-                    / pos.signal.entry_price
-                    * prev_dir as f64;
-
-                self.trade_log.push(TradeRecord {
-                    instrument_id,
-                    direction: prev_dir,
-                    entry_price: pos.signal.entry_price,
-                    exit_price: close,
-                    pnl_frac,
-                    exit_reason: reason.clone(),
-                    bars_held: pos.bars_held,
-                });
-                state.engine.close_position(close, reason);
-                let flat_qty = prev_qty.abs();
-                let flat_side = if prev_qty > 0.0 {
-                    OrderSide::Sell
-                } else {
-                    OrderSide::Buy
-                };
-                state.qty_open = 0.0;
-                Some(BarAction::Exit { side: flat_side, qty: flat_qty })
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        action
     }
 
     /// Print a summary of all closed trades.
@@ -247,6 +150,102 @@ impl VortexStrategy {
         }
 
         println!("╚══════════════════════════════════════════════════════════╝");
+    }
+}
+
+impl nautilus_common::actor::DataActor for VortexStrategy {
+    fn on_bar(&mut self, bar: &Bar) -> Result<()> {
+        let instrument_id = bar.bar_type.instrument_id();
+        let state = match self.states.get_mut(&instrument_id) {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+
+        let close = bar.close.as_f64();
+        let open  = bar.open.as_f64();
+        let volume = bar.volume.as_f64();
+
+        if volume <= 0.0 || close <= 0.0 {
+            state.prev_close = Some(close);
+            return Ok(());
+        }
+
+        let log_return = match state.prev_close {
+            Some(prev) if prev > 0.0 => (close / prev).ln(),
+            _ => {
+                state.prev_close = Some(close);
+                return Ok(());
+            }
+        };
+        state.prev_close = Some(close);
+
+        let tick = MftTradeTick {
+            price: close,
+            volume,
+            is_buy: close >= open,
+            ts_ms: 0,
+        };
+
+        let signal = state.engine.on_bar(close, log_return, &tick);
+        let position = self.core.cache().position_for_order(instrument_id);
+
+        if let Some(sig) = signal {
+            if position.is_none() {
+                let equity = self.equity;
+                let base_qty = (equity * sig.size_frac / close).max(1e-8);
+                let side = if sig.direction == 1 { OrderSide::Buy } else { OrderSide::Sell };
+                
+                let order = self.core.order_factory().market(
+                    instrument_id,
+                    side,
+                    Quantity::from(&format!("{:.8}", base_qty)),
+                    Some(TimeInForce::Gtc),
+                    None, None, None, None, None, None,
+                );
+                self.core.submit_market_order(order);
+                
+                state.engine.open_position(sig.clone());
+                state.qty_open = if side == OrderSide::Buy { base_qty } else { -base_qty };
+            }
+        } else if let Some(ref pos) = state.engine.position {
+            let z = state.engine.ou.last_z().unwrap_or(0.0);
+            if let Some(reason) = state.engine.check_exit(close, z, pos.bars_held) {
+                if let Some(nautilus_pos) = position {
+                    let order = self.core.order_factory().market(
+                        instrument_id,
+                        if nautilus_pos.is_long() { OrderSide::Sell } else { OrderSide::Buy },
+                        nautilus_pos.quantity().abs(),
+                        Some(TimeInForce::Gtc),
+                        None, None, None, None, None, None,
+                    );
+                    self.core.submit_market_order(order);
+
+                    self.trade_log.push(TradeRecord {
+                        instrument_id,
+                        direction: if nautilus_pos.is_long() { 1 } else { -1 },
+                        entry_price: pos.signal.entry_price,
+                        exit_price: close,
+                        pnl_frac: (close - pos.signal.entry_price) / pos.signal.entry_price * (if nautilus_pos.is_long() { 1.0 } else { -1.0 }),
+                        exit_reason: reason.clone(),
+                        bars_held: pos.bars_held,
+                    });
+                    state.engine.close_position(close, reason);
+                    state.qty_open = 0.0;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Strategy for VortexStrategy {
+    fn core(&self) -> &StrategyCore {
+        &self.core
+    }
+
+    fn core_mut(&mut self) -> &mut StrategyCore {
+        &mut self.core
     }
 }
 

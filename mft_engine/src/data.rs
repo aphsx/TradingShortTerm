@@ -79,7 +79,9 @@ struct RawKline(
     serde_json::Value, // 7: quote_vol (str)
     serde_json::Value, // 8: n_trades  (i64)
     serde_json::Value, // 9: taker_buy_base (str)
+    #[allow(dead_code)]
     serde_json::Value, // 10: taker_buy_quote (str)
+    #[allow(dead_code)]
     serde_json::Value, // 11: ignore
 );
 
@@ -117,7 +119,7 @@ impl From<RawKline> for Kline {
 #[derive(Deserialize, Debug)]
 pub struct BinanceAggTrade {
     #[serde(rename = "a")]
-    pub agg_id: i64,
+    pub _agg_id: i64, // Marked as unused
     #[serde(rename = "p")]
     pub price: String,
     #[serde(rename = "q")]

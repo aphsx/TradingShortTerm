@@ -255,6 +255,7 @@ impl FlowSignal {
 }
 
 /// Wrapper that combines OFI + VPIN into a single signal.
+#[derive(Debug)]
 pub struct FlowAnalyser {
     pub ofi:  OfiEngine,
     pub vpin: VpinEngine,

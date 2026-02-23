@@ -81,6 +81,7 @@ impl ActivePosition {
 }
 
 /// Core strategy engine: holds state for all quant models.
+#[derive(Debug)]
 pub struct StrategyEngine {
     pub garch:  Garch11,
     pub ou:     OuSignalEngine,
