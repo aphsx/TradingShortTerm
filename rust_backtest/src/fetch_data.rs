@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
     // 3. Setup Config
     let client = Client::new();
     let end_time = Utc::now().timestamp_millis();
-    let start_time = end_time - (duration_hours * 3600 * 1000);
+    let start_time = end_time - (duration_hours as i64 * 3600 * 1000);
 
     println!("Target Symbols: {:?}", symbols);
     println!("Base URL: {}", base_url);
@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
         let dir_path = PathBuf::from("data").join(symbol);
         fs::create_dir_all(&dir_path)?;
 
-        let klines = download_klines(&client, &base_url, symbol, interval, start_time, end_time).await?;
+        let klines = download_klines(&client, &base_url, symbol, &interval, start_time, end_time).await?;
         
         if klines.is_empty() {
             println!("No klines found for {}", symbol);
@@ -101,7 +101,7 @@ async fn download_klines(
 ) -> Result<Vec<BinanceKline>> {
     let mut all_klines = Vec::new();
     let mut current_start = start_time;
-    const BATCH_TIME: i64 = 60 * 60 * 1000; // 1 hour per batch (1000 * 1min candles)
+    const BATCH_TIME: i64 = 24 * 60 * 60 * 1000; // 24 hours per batch (max 1000 klines for 1m is ~16.6 hours, so this is fine)
 
     while current_start < end_time {
         let batch_end = std::cmp::min(current_start + BATCH_TIME, end_time);
