@@ -46,20 +46,22 @@ async fn main() -> Result<()> {
         let df = LazyFrame::scan_parquet(file_path, Default::default())?
             .collect()?;
         
+        let timestamps = df.column("timestamp")?.str()?;
         let opens = df.column("open")?.f64()?;
         let highs = df.column("high")?.f64()?;
         let lows = df.column("low")?.f64()?;
         let closes = df.column("close")?.f64()?;
         let volumes = df.column("volume")?.f64()?;
-        let times = df.column("close_time")?.i64()?;
+        let open_times = df.column("open_time")?.i64()?;
 
         for i in 0..df.height() {
+            let timestamp = timestamps.get(i).unwrap_or("");
             let open = opens.get(i).unwrap_or(0.0);
             let high = highs.get(i).unwrap_or(0.0);
             let low = lows.get(i).unwrap_or(0.0);
             let close = closes.get(i).unwrap_or(0.0);
             let volume = volumes.get(i).unwrap_or(0.0);
-            let t = times.get(i).unwrap_or(0);
+            let t = open_times.get(i).unwrap_or(0);
 
             // Nautilus expects Nanoseconds
             let ts_ns = (t as u64) * 1_000_000;

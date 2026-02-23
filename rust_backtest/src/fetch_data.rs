@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, TimeZone, Utc};
 use polars::prelude::*;
 use reqwest::Client;
 use serde::Deserialize;
@@ -175,14 +175,23 @@ fn klines_to_dataframe(klines: Vec<BinanceKline>) -> Result<DataFrame> {
     let close_times: Vec<i64> = klines.iter().map(|k| k.close_time).collect();
     let quote_asset_volumes: Vec<f64> = klines.iter().map(|k| k.quote_asset_volume.parse::<f64>().unwrap_or(0.0)).collect();
     let number_of_trades: Vec<i64> = klines.iter().map(|k| k.number_of_trades).collect();
+    
+    // Convert timestamps to readable datetime strings
+    let timestamps: Vec<String> = open_times.iter()
+        .map(|&ts| {
+            let dt = Utc.timestamp_millis_opt(ts).unwrap();
+            dt.format("%Y-%m-%d %H:%M:%S").to_string()
+        })
+        .collect();
 
     let df = df!(
-        "open_time" => open_times,
+        "timestamp" => timestamps,
         "open" => opens,
         "high" => highs,
         "low" => lows,
         "close" => closes,
         "volume" => volumes,
+        "open_time" => open_times,
         "close_time" => close_times,
         "quote_asset_volume" => quote_asset_volumes,
         "number_of_trades" => number_of_trades
