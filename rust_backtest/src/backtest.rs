@@ -6,19 +6,22 @@ use nautilus_backtest::engine::BacktestEngine;
 use nautilus_backtest::config::BacktestEngineConfig;
 use nautilus_core::nanos::UnixNanos;
 use nautilus_model::{
-    enums::{OmsType, AggressorSide, AccountType, BookType},
+    enums::{OmsType, AggressorSide, AccountType, BookType, AggregationSource, BarAggregation, PriceType},
     identifiers::{InstrumentId, Symbol, Venue, TradeId},
     instruments::{InstrumentAny, CryptoPerpetual},
     types::{Price, Quantity, Currency, Money},
-    data::{QuoteTick, TradeTick, Data},
+    data::{QuoteTick, TradeTick, Bar, BarType, BarSpecification, Data},
 };
-use nautilus_execution::models::fee::FeeModelAny;
+use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
 use nautilus_execution::models::fill::FillModelAny;
 use nautilus_trading::{
     examples::strategies::ema_cross::EmaCross,
 };
 use anyhow::Result;
 use ahash::AHashMap;
+use rust_decimal::Decimal;
+use log::LevelFilter;
+use std::str::FromStr;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -27,8 +30,16 @@ async fn main() -> Result<()> {
     // 1. Configuration - Read from root .env
     dotenvy::from_filename("../.env").ok();
 
-    let symbol_str = std::env::var("BACKTEST_SYMBOL").unwrap_or_else(|_| "BTCUSDT".to_string());
+    let symbol_str = std::env::var("BACKTEST_SYMBOL").unwrap_or_else(|_| "SOLUSDT".to_string());
     println!("Running backtest for: {}", symbol_str);
+    
+    // Extract base/quote (assuming USDT for now)
+    let base_currency = if symbol_str.ends_with("USDT") {
+        &symbol_str[..symbol_str.len()-4]
+    } else {
+        "BTC"
+    };
+    println!("Base currency: {}, Quote: USDT", base_currency);
     
     // 2. Load Local Data (Parquet)
     let data_path = format!("data/{}/*.parquet", symbol_str);
@@ -59,13 +70,14 @@ async fn main() -> Result<()> {
     let initial_cash_f64: f64 = initial_cash.parse().unwrap_or(100000.0);
     
     // 4. Setup Nautilus backtest engine
-    let config = BacktestEngineConfig::default();
+    let mut config = BacktestEngineConfig::default();
+    config.logging.stdout_level = LevelFilter::Info; // Enable info logging to stdout
     let mut engine = BacktestEngine::new(config)?;
 
     // Add Venue with 0.53.0 required 28 arguments
     engine.add_venue(
         Venue::from("SIM"),
-        OmsType::Hedging,
+        OmsType::Netting, // Change to Netting for realistic one-way position management
         AccountType::Margin,
         BookType::L1_MBP, // Correct variant for 0.53.0
         vec![Money::new(initial_cash_f64, Currency::from(currency_str.as_str()))],
@@ -75,7 +87,7 @@ async fn main() -> Result<()> {
         AHashMap::new(),
         vec![],
         FillModelAny::default(),
-        FeeModelAny::default(),
+        FeeModelAny::MakerTaker(MakerTakerFeeModel), // Use maker/taker fees from instrument
         None,
         None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
     )?;
@@ -84,13 +96,16 @@ async fn main() -> Result<()> {
     let instrument = CryptoPerpetual::new_checked(
         instrument_id.clone(),
         Symbol::from(symbol_str.as_str()),
-        Currency::from("BTC"),
+        Currency::from(base_currency),
         Currency::from("USDT"),
         Currency::from("USDT"),
         false, 1, 3,
         Price::from("0.1"), 
         Quantity::from("0.001"),
-        None, None, None, None, None, None, None, None, None, None, None, None, None,
+        None, None, None, None, None, None, None, None, None, None,
+        Some(Decimal::from_str("0.0002").unwrap()), // maker_fee 0.02%
+        Some(Decimal::from_str("0.0004").unwrap()), // taker_fee 0.04%
+        None,
         UnixNanos::default(), // ts_event
         UnixNanos::default(), // ts_init
     )?;
@@ -160,13 +175,51 @@ async fn main() -> Result<()> {
                 engine.add_data(vec![Data::from(trade)], None, false, false);
                 total_events += 2;
             }
+
+            // Add Bar data (required for EmaCross strategy)
+            // A bar ending at T should have a timestamp of T + 60s
+            let bar_ts = UnixNanos::from(((ts_ms + 60_000) * 1_000_000) as u64);
+            let bar_type = BarType::new(
+                instrument_id.clone(),
+                BarSpecification::new(1, BarAggregation::Minute, PriceType::Last),
+                AggregationSource::External,
+            );
+            let bar = Bar::new(
+                bar_type,
+                Price::from(format!("{:.1}", open)),
+                Price::from(format!("{:.1}", high)),
+                Price::from(format!("{:.1}", low)),
+                Price::from(format!("{:.1}", close)),
+                Quantity::from(format!("{:.3}", volume)),
+                bar_ts, // ts_event
+                bar_ts, // ts_init
+            );
+            engine.add_data(vec![Data::from(bar)], None, false, false);
+            total_events += 1;
         }
     }
     
     println!("Loaded {} market events.", total_events);
     
-    println!("Running backtest...");
+    println!("Running backtest engine...");
     engine.run(None, None, None, false)?;
+    println!("Backtest execution finished.");
+    
+    // 6. Report results
+    // 6. Report results
+    let result = engine.get_result();
+    println!("Backtest Result Summary:");
+    println!("Total Events: {}", result.total_events);
+    println!("Total Orders: {}", result.total_orders);
+    println!("Total Positions: {}", result.total_positions);
+    
+    for (trader_id, pnls) in &result.stats_pnls {
+        println!("Trader: {}", trader_id);
+        for (venue, pnl) in pnls {
+            println!("  Venue: {}, PnL: {}", venue, pnl);
+        }
+    }
+    
     println!("Backtest completed successfully!");
     
     Ok(())
