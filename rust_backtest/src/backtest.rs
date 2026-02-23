@@ -77,7 +77,7 @@ static INSTRUMENT_SPECS: &[InstrumentSpec] = &[
     InstrumentSpec { symbol: "XRPUSDT", base: "XRP", price_prec: 4, size_prec: 1, price_incr: "0.0001", size_incr: "1.0"  },
 ];
 
-fn find_spec(symbol: &str) -> Option<&'static InstrumentSpec> {
+pub fn find_spec(symbol: &str) -> Option<&'static InstrumentSpec> {
     INSTRUMENT_SPECS.iter().find(|s| s.symbol == symbol)
 }
 
@@ -315,7 +315,7 @@ fn main() -> Result<()> {
     engine.add_data(all_data, None, false, true);
 
     println!("\nStarting NautilusTrader Backtest Engine...");
-    engine.run(None, None, None, true)?;
+    engine.run(None, None, None, false)?;  // Changed last parameter to false for proper shutdown
 
     // ─── 8. Results ─────────────────────────────────────────────────────
     let result = engine.get_result();
@@ -328,6 +328,7 @@ fn main() -> Result<()> {
     println!("╚══════════════════════════════════════════════╝");
     
     // ─── 9. Cleanup ─────────────────────────────────────────────────────
+    // Proper NautilusTrader disposal sequence
     engine.dispose();
     Ok(())
 }

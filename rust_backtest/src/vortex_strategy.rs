@@ -22,12 +22,37 @@ use std::ops::{Deref, DerefMut};
 use nautilus_trading::strategy::{Strategy, StrategyCore, StrategyConfig};
 use nautilus_common::actor::DataActorCore;
 use nautilus_model::{
-    enums::{OrderSide, TimeInForce},
+    enums::{OrderSide, TimeInForce, BarAggregation, PriceType, AggregationSource},
     identifiers::{InstrumentId, StrategyId},
-    data::{Bar, BarType},
+    data::{Bar, BarType, BarSpecification},
     types::{Quantity},
 };
 use anyhow::Result;
+
+// ─── Instrument specification table ───────────────────────────────────────
+
+/// Per-symbol precision and tick-size data.
+struct InstrumentSpec {
+    symbol:      &'static str,
+    base:        &'static str,
+    price_prec:  u8,
+    size_prec:   u8,
+    price_incr:  &'static str,
+    size_incr:   &'static str,
+}
+
+/// Instrument precision lookup table.
+static INSTRUMENT_SPECS: &[InstrumentSpec] = &[
+    InstrumentSpec { symbol: "BTCUSDT", base: "BTC", price_prec: 1, size_prec: 3, price_incr: "0.1",  size_incr: "0.001" },
+    InstrumentSpec { symbol: "ETHUSDT", base: "ETH", price_prec: 2, size_prec: 3, price_incr: "0.01", size_incr: "0.001" },
+    InstrumentSpec { symbol: "SOLUSDT", base: "SOL", price_prec: 2, size_prec: 1, price_incr: "0.01", size_incr: "0.1"   },
+    InstrumentSpec { symbol: "BNBUSDT", base: "BNB", price_prec: 2, size_prec: 2, price_incr: "0.01", size_incr: "0.01"  },
+    InstrumentSpec { symbol: "XRPUSDT", base: "XRP", price_prec: 4, size_prec: 1, price_incr: "0.0001", size_incr: "1.0"  },
+];
+
+fn find_spec(symbol: &str) -> Option<&'static InstrumentSpec> {
+    INSTRUMENT_SPECS.iter().find(|s| s.symbol == symbol)
+}
 
 // ─── Per-symbol state ──────────────────────────────────────────────────────
 
@@ -171,6 +196,20 @@ impl VortexStrategy {
 }
 
 impl nautilus_common::actor::DataActor for VortexStrategy {
+    fn on_start(&mut self) -> Result<()> {
+        // Subscribe to bar data for all instruments
+        let instrument_ids: Vec<InstrumentId> = self.states.keys().copied().collect();
+        for instrument_id in instrument_ids {
+            let bar_type = BarType::new(
+                instrument_id,
+                BarSpecification::new(1, BarAggregation::Minute, PriceType::Last),
+                AggregationSource::External,
+            );
+            self.subscribe_bars(bar_type, None, None);
+        }
+        Ok(())
+    }
+
     fn on_bar(&mut self, bar: &Bar) -> Result<()> {
         let instrument_id = bar.bar_type.instrument_id();
         
@@ -232,10 +271,16 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
                 let base_qty = (equity * sig.size_frac / close).max(1e-8);
                 let side = if sig.direction == 1 { OrderSide::Buy } else { OrderSide::Sell };
                 
+                // Format quantity according to instrument precision
+                let size_prec = if let Some(spec) = find_spec(instrument_id.symbol.as_str()) {
+                    spec.size_prec
+                } else {
+                    8 // fallback to 8 if spec not found
+                };
                 let order = self.core.order_factory().market(
                     instrument_id,
                     side,
-                    Quantity::from(&format!("{:.8}", base_qty)),
+                    Quantity::from(&format!("{:.1$}", base_qty, size_prec as usize)),
                     Some(TimeInForce::Gtc),
                     None, None, None, None, None, None,
                 );
@@ -278,10 +323,16 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
             };
             
             if should_exit {
+                // Format quantity according to instrument precision
+                let size_prec = if let Some(spec) = find_spec(instrument_id.symbol.as_str()) {
+                    spec.size_prec
+                } else {
+                    8 // fallback to 8 if spec not found
+                };
                 let order = self.core.order_factory().market(
                     instrument_id,
                     exit_side,
-                    Quantity::from(&format!("{:.8}", exit_qty)),
+                    Quantity::from(&format!("{:.1$}", exit_qty, size_prec as usize)),
                     Some(TimeInForce::Gtc),
                     None, None, None, None, None, None,
                 );
