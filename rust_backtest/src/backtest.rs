@@ -1,5 +1,9 @@
-use ahash::AHashMap;
 use anyhow::Result;
+use polars::prelude::*;
+use std::path::Path;
+use glob::glob;
+
+// Import Nautilus for realistic backtest
 use nautilus_backtest::{config::BacktestEngineConfig, engine::BacktestEngine};
 use nautilus_execution::models::{fee::FeeModelAny, fill::FillModelAny};
 use nautilus_model::{
@@ -9,18 +13,78 @@ use nautilus_model::{
     instruments::{InstrumentAny, CurrencyPair},
     types::{Money, Price, Quantity, Currency},
 };
-use nautilus_trading::examples::strategies::EmaCross;
-use polars::prelude::*;
-use std::path::Path;
-use glob::glob;
+
+// Import MFT strategy
+use mft_engine::{
+    config::AppConfig,
+    data::Kline,
+    strategy::{StrategyEngine, TradeSignal},
+};
+
+// Import Nautilus trading traits
+use nautilus_trading::strategy::Strategy;
+
+// Bridge between MFT strategy and Nautilus engine
+struct MftStrategyWrapper {
+    mft_engine: StrategyEngine,
+    instrument_id: InstrumentId,
+    klines: Vec<Kline>,
+    current_index: usize,
+}
+
+impl MftStrategyWrapper {
+    fn new(mft_engine: StrategyEngine, instrument_id: InstrumentId) -> Self {
+        Self {
+            mft_engine,
+            instrument_id,
+            klines: Vec::new(),
+            current_index: 0,
+        }
+    }
+    
+    fn add_klines(&mut self, klines: Vec<Kline>) {
+        self.klines = klines;
+        self.current_index = 0;
+    }
+    
+    fn process_next_bar(&mut self) -> Option<TradeSignal> {
+        if self.current_index >= self.klines.len() {
+            return None;
+        }
+        
+        let current_bar = &self.klines[self.current_index];
+        let prev_close = if self.current_index > 0 {
+            self.klines[self.current_index - 1].close
+        } else {
+            current_bar.open
+        };
+        
+        let log_return = if prev_close > 0.0 {
+            (current_bar.close / prev_close).ln()
+        } else {
+            0.0
+        };
+        
+        let tick = current_bar.to_tick();
+        let signal = self.mft_engine.on_bar(current_bar.close, log_return, &tick);
+        
+        self.current_index += 1;
+        signal
+    }
+}
+
+// Implement Nautilus Strategy trait (simplified)
+impl Strategy for MftStrategyWrapper {
+    // This is a simplified implementation - you'd need to implement all required methods
+    // For now, we'll use a basic approach
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("--- VORTEX-7 Offline Backtest ---");
 
-    // 1. Configuration - Read from .env if possible, or use defaults
-    let env_path = Path::new("..").join("mft_engine").join(".env");
-    dotenvy::from_path(env_path).ok();
+    // 1. Configuration - Read from .env
+    dotenvy::dotenv().ok();
 
     let symbol_str = std::env::var("BACKTEST_SYMBOL").unwrap_or_else(|_| "BTCUSDT".to_string());
     println!("Running backtest for: {}", symbol_str);
@@ -36,11 +100,8 @@ async fn main() -> Result<()> {
 
     println!("Loading {} data files...", files.len());
     
-    let mut all_trades = Vec::new();
-    let instrument_id = InstrumentId::new(
-        Symbol::from(symbol_str.as_ref()),
-        Venue::from("SIM")
-    );
+    // Convert all data to Kline structs
+    let mut all_klines = Vec::new();
 
     for file_path in files {
         let df = LazyFrame::scan_parquet(file_path, Default::default())?
@@ -61,33 +122,34 @@ async fn main() -> Result<()> {
             let low = lows.get(i).unwrap_or(0.0);
             let close = closes.get(i).unwrap_or(0.0);
             let volume = volumes.get(i).unwrap_or(0.0);
-            let t = open_times.get(i).unwrap_or(0);
+            let open_time = open_times.get(i).unwrap_or(0);
 
-            // Nautilus expects Nanoseconds
-            let ts_ns = (t as u64) * 1_000_000;
-            
-            // Create synthetic trade ticks from OHLCV data
-            // Use close price as trade price and volume as trade size
-            let price = Price::from(&format!("{:.2}", close));
-            let qty = Quantity::from(&format!("{:.8}", volume));
-            let trade_id = TradeId::new(format!("trade_{}", i).as_str());
-            
-            let trade = TradeTick::new(
-                instrument_id.clone(),
-                price,
-                qty,
-                AggressorSide::Buyer, // Assume buyer aggressor
-                trade_id,
-                ts_ns.into(),
-                ts_ns.into(),
-            );
-            all_trades.push(Data::Trade(trade));
+            // Create Kline struct for mft_engine
+            let kline = Kline {
+                open_time,
+                open,
+                high,
+                low,
+                close,
+                volume,
+                close_time: open_time + 59_999, // Approximate close time (1min - 1ms)
+                quote_vol: close * volume,
+                n_trades: 1, // Not available from kline data
+                taker_buy_base_vol: volume * 0.5, // Assume 50% taker buy
+            };
+            all_klines.push(kline);
         }
     }
 
-    println!("Loaded {} trade ticks.", all_trades.len());
+    println!("Loaded {} klines.", all_klines.len());
 
-    // 3. Setup backtest engine
+    // 3. Setup MFT strategy engine
+    let mut config = AppConfig::from_env()?;
+    config.trading_pairs = vec![symbol_str.clone()];
+    
+    let mut mft_strategy = StrategyEngine::new(config);
+    
+    // 4. Setup Nautilus backtest engine
     let mut engine = BacktestEngine::new(BacktestEngineConfig::default())?;
 
     engine.add_venue(
@@ -95,13 +157,18 @@ async fn main() -> Result<()> {
         OmsType::Hedging,
         AccountType::Margin,
         BookType::L1_MBP,
-        vec![Money::from("10_000 USD")],
-        None, None, AHashMap::new(), vec![], 
+        vec![Money::from("1_000 USD")],
+        None, None, std::collections::HashMap::new(), vec![], 
         FillModelAny::default(), FeeModelAny::default(),
         None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
     )?;
 
     // Create a basic currency pair instrument  
+    let instrument_id = InstrumentId::new(
+        Symbol::from(symbol_str.as_ref()),
+        Venue::from("SIM")
+    );
+    
     let instrument = InstrumentAny::CurrencyPair(
         CurrencyPair::new(
             instrument_id.clone(),
@@ -132,22 +199,9 @@ async fn main() -> Result<()> {
 
     engine.add_instrument(instrument)?;
 
-    let strategy = EmaCross::new(
-        instrument_id.clone(),
-        Quantity::from("0.1"), // BTC size
-        10,
-        20,
-    );
-    engine.add_strategy(strategy)?;
-
-    // 4. Run backtest
-    println!("Running backtest engine...");
-    engine.add_data(all_trades, None, true, true);
-    engine.run(None, None, None, false)?;
-
-    let result = engine.get_result();
-    println!("--- Results ---");
-    println!("Result: {:?}", result);
+    // 5. Create custom strategy wrapper for MFT
+    let mft_wrapper = MftStrategyWrapper::new(mft_strategy, instrument_id.clone());
+    engine.add_strategy(Box::new(mft_wrapper))?;
 
     Ok(())
 }

@@ -26,10 +26,8 @@ struct BinanceKline {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 1. Load .env from mft_engine directory
-    let env_path = Path::new("..").join("mft_engine").join(".env");
-    println!("Loading .env from: {:?}", env_path);
-    dotenvy::from_path(env_path).ok();
+    // 1. Load .env
+    dotenvy::dotenv().ok();
 
     // 2. Get Trading Pairs & URL
     let trading_pairs_str = std::env::var("TRADING_PAIRS").unwrap_or_else(|_| "BTCUSDT".to_string());

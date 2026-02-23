@@ -12,10 +12,16 @@ name = "fetch_data"
 path = "src/fetch_data.rs"
 
 [dependencies]
+# Local mft_engine
+mft_engine = { path = "../mft_engine" }
+
+# Nautilus for realistic backtest
 nautilus-backtest = "0.53.0"
 nautilus-execution = "0.53.0"
 nautilus-model = "0.53.0"
 nautilus-trading = { version = "0.53.0", features = ["examples"] }
+
+# Core dependencies
 ahash = "0.8"
 anyhow = "1.0"
 tokio = { version = "1", features = ["full"] }
