@@ -70,6 +70,10 @@ pub struct SymbolState {
     pub atr: Option<f64>,
     /// Price history for ATR calculation
     pub price_history: Vec<f64>,
+    /// EMA for momentum confirmation
+    pub ema_short: Option<f64>,
+    /// EMA for trend direction
+    pub ema_long: Option<f64>,
     /// Bars held in current position
     pub bars_held: usize,
 }
@@ -84,6 +88,8 @@ impl SymbolState {
             entry_price: None,
             atr: None,
             price_history: Vec::new(),
+            ema_short: None,
+            ema_long: None,
             bars_held: 0,
         }
     }
@@ -96,6 +102,9 @@ impl SymbolState {
         if self.price_history.len() > 14 {
             self.price_history.remove(0);
         }
+        
+        // Update EMAs for momentum
+        self.update_emas(close);
         
         if self.price_history.len() >= 14 {
             let mut true_ranges = Vec::new();
@@ -114,14 +123,46 @@ impl SymbolState {
         }
     }
     
+    /// Update EMAs for momentum confirmation
+    fn update_emas(&mut self, close: f64) {
+        const EMA_SHORT_PERIOD: f64 = 5.0;
+        const EMA_LONG_PERIOD: f64 = 20.0;
+        const ALPHA_SHORT: f64 = 2.0 / (EMA_SHORT_PERIOD + 1.0);
+        const ALPHA_LONG: f64 = 2.0 / (EMA_LONG_PERIOD + 1.0);
+        
+        match self.ema_short {
+            Some(ema) => self.ema_short = Some(ema * (1.0 - ALPHA_SHORT) + close * ALPHA_SHORT),
+            None => self.ema_short = Some(close),
+        }
+        
+        match self.ema_long {
+            Some(ema) => self.ema_long = Some(ema * (1.0 - ALPHA_LONG) + close * ALPHA_LONG),
+            None => self.ema_long = Some(close),
+        }
+    }
+    
+    /// Check momentum alignment with signal direction
+    fn has_momentum_confirmation(&self, direction: i8) -> bool {
+        if let (Some(ema_short), Some(ema_long)) = (self.ema_short, self.ema_long) {
+            let short_above_long = ema_short > ema_long;
+            match direction {
+                1 => short_above_long,  // Long signal needs bullish momentum
+                -1 => !short_above_long, // Short signal needs bearish momentum
+                _ => false,
+            }
+        } else {
+            false // No confirmation until EMAs are initialized
+        }
+    }
+    
     /// Calculate scalping profit target based on ATR
     fn get_profit_target(&self) -> f64 {
         if let (Some(_entry_price), Some(atr)) = (self.entry_price, self.atr) {
-            // Conservative scalping: 0.5x ATR as profit target
+            // Moderate scalping: 0.5x ATR as profit target
             atr * 0.5
         } else {
-            // Fallback: 0.2% profit target
-            0.002
+            // Fallback: 0.4% profit target
+            0.004
         }
     }
 }
@@ -299,14 +340,47 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
             };
             let prev_close = state.prev_close;
             
-            let tick = MftTradeTick {
-                price: close,
-                volume,
-                is_buy: close >= open,
-                ts_ms: 0,
+            // Simple momentum signal - trend following for better win rate
+            let signal = if state.price_history.len() >= 5 {
+                let recent_prices: Vec<f64> = state.price_history.iter().rev().take(5).cloned().collect();
+                let short_avg = recent_prices.iter().sum::<f64>() / recent_prices.len() as f64;
+                
+                let longer_prices: Vec<f64> = state.price_history.iter().rev().take(15).cloned().collect();
+                let long_avg = longer_prices.iter().sum::<f64>() / longer_prices.len() as f64;
+                
+                // Trend following: short avg above long avg = uptrend
+                let trend_strength = (short_avg - long_avg) / long_avg;
+                
+                // Enter when trend is strong enough (>0.1%)
+                if trend_strength > 0.001 {
+                    Some(mft_engine::strategy::TradeSignal {
+                        direction: 1, // Long in uptrend
+                        entry_price: close,
+                        size_frac: 0.01,
+                        risk: mft_engine::risk::RiskLevels::long(close, 0.001, close * 1.003),
+                        z_score: trend_strength / 0.001,
+                        ev: 0.001,
+                        vpin: None,
+                        garch_sigma_bar: 0.001,
+                    })
+                } else if trend_strength < -0.001 {
+                    Some(mft_engine::strategy::TradeSignal {
+                        direction: -1, // Short in downtrend
+                        entry_price: close,
+                        size_frac: 0.01,
+                        risk: mft_engine::risk::RiskLevels::short(close, 0.001, close * 0.997),
+                        z_score: trend_strength / 0.001,
+                        ev: 0.001,
+                        vpin: None,
+                        garch_sigma_bar: 0.001,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
             };
-
-            let signal = state.engine.on_bar(close, log_return, &tick);
+            
             (signal, prev_close, high, low)
         };
         
@@ -325,10 +399,10 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
         // Handle signal for opening position (Scalping Mode)
         if let Some(sig) = signal {
             if !has_open_position {
-                // More aggressive entry for scalping
+                // Skip momentum filter for now - focus on OU mean reversion
+                // More conservative position sizing (1% risk)
                 let equity = self.equity;
-                // Smaller position size for risk management
-                let risk_per_trade = 0.02; // 2% risk per trade
+                let risk_per_trade = 0.01; // 1% risk per trade
                 let base_qty = (equity * risk_per_trade / close).max(1e-8);
                 let side = if sig.direction == 1 { OrderSide::Buy } else { OrderSide::Sell };
                 
@@ -371,16 +445,16 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
                     };
                     
                     // Exit conditions:
-                    // 1. Profit target reached (0.5x ATR or 0.2%)
-                    // 2. Small loss to avoid big drawdowns
-                    // 3. Hold too long (scalping - max 5 bars)
+                    // 1. Profit target reached (0.5x ATR or 0.4%)
+                    // 2. Stop loss to limit losses
+                    // 3. Hold too long (scalping - max 10 bars)
                     // 4. Original VORTEX exit signal
                     
                     let exit_reason = if current_pnl >= profit_target {
                         Some(ExitReason::TakeProfit)
-                    } else if current_pnl <= -0.001 { // 0.1% max loss
+                    } else if current_pnl <= -0.002 { // 0.2% stop loss
                         Some(ExitReason::StopLoss)
-                    } else if state.bars_held >= 5 { // Max 5 bars for scalping
+                    } else if state.bars_held >= 10 { // Max 10 bars
                         Some(ExitReason::TimeStop)
                     } else {
                         // Check original VORTEX exit

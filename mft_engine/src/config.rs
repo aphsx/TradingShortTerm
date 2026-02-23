@@ -121,7 +121,7 @@ impl AppConfig {
             trading_pairs,
 
             initial_capital: parse_env("INITIAL_CAPITAL", 1000.0)?,
-            risk_per_trade:  parse_env("RISK_PER_TRADE",  0.01)?,
+            risk_per_trade:  parse_env("RISK_PER_TRADE",  0.01)?, // Conservative for frequent trading
             max_leverage:    parse_env::<u32>("MAX_LEVERAGE", 10)?,
 
             maker_fee: parse_env("MAKER_FEE", DEFAULT_MAKER_FEE)?,
@@ -133,9 +133,9 @@ impl AppConfig {
             garch_alpha: parse_env("GARCH_ALPHA", 0.10)?,
             garch_beta:  parse_env("GARCH_BETA",  0.85)?,
 
-            ou_entry_z: parse_env("OU_ENTRY_Z", 2.0)?,
-            ou_exit_z:  parse_env("OU_EXIT_Z",  0.5)?,
-            ou_window:  parse_env("OU_WINDOW",  120usize)?,
+            ou_entry_z: parse_env("OU_ENTRY_Z", 1.0)?, // Even lower threshold for more signals
+            ou_exit_z:  parse_env("OU_EXIT_Z",  0.2)?,  // Earlier exit for quick profits
+            ou_window:  parse_env("OU_WINDOW",  30usize)?, // Much shorter window for faster adaptation
 
             vpin_bucket_size: parse_env("VPIN_BUCKET_SIZE", 50usize)?,
             vpin_n_buckets:   parse_env("VPIN_N_BUCKETS",   50usize)?,
@@ -144,9 +144,9 @@ impl AppConfig {
             min_ev:    parse_env("MIN_EV",     0.0001)?,
             min_p_win: parse_env("MIN_P_WIN",  0.52)?,
 
-            stop_loss_frac:       parse_env("STOP_LOSS_FRAC",        0.003)?,
-            exit_prob_threshold:  parse_env("EXIT_PROB_THRESHOLD",   0.30)?,
-            max_hold_bars:        parse_env("MAX_HOLD_BARS",         60usize)?,
+            stop_loss_frac:       parse_env("STOP_LOSS_FRAC",        0.001)?, // Tighter stop loss
+            exit_prob_threshold:  parse_env("EXIT_PROB_THRESHOLD",   0.20)?, // Earlier probability exit
+            max_hold_bars:        parse_env("MAX_HOLD_BARS",         5usize)?, // Much shorter hold time
 
             kline_interval:  env::var("KLINE_INTERVAL").unwrap_or_else(|_| "1m".into()),
             backtest_symbol: env::var("BACKTEST_SYMBOL").unwrap_or_else(|_| "BTCUSDT".into()),
