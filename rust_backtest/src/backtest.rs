@@ -21,7 +21,6 @@ mod vortex_strategy;
 use anyhow::Result;
 use log::LevelFilter;
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
 
 use nautilus_backtest::engine::BacktestEngine;
 use nautilus_backtest::config::BacktestEngineConfig;
@@ -30,13 +29,13 @@ use nautilus_core::nanos::UnixNanos;
 use nautilus_model::{
     enums::{
         OmsType, AccountType, BookType,
-        AggregationSource, BarAggregation, PriceType, AggressorSide,
+        AggregationSource, BarAggregation, PriceType,
     },
-    identifiers::{InstrumentId, Symbol, Venue, TraderId, TradeId},
+    identifiers::{InstrumentId, Symbol, Venue, TraderId},
     instruments::{InstrumentAny, CryptoPerpetual},
     types::{Price, Quantity, Currency, Money},
     data::{
-        Data, Bar, QuoteTick, TradeTick,
+        Data, Bar, QuoteTick,
         BarType, BarSpecification,
     },
 };
@@ -45,9 +44,6 @@ use nautilus_execution::models::{
     fill::FillModelAny,
     latency::StaticLatencyModel,
 };
-use nautilus_model::orders::OrderAny;
-use nautilus_model::orders::market::MarketOrder;
-use nautilus_model::enums::{OrderSide, TimeInForce};
 use nautilus_model::identifiers::StrategyId;
 // use nautilus_trading::factories::OrderFactory; // Path is incorrect in 0.53.0
 // UnixNanos is already imported from nautilus_core::nanos at line 28
@@ -57,7 +53,7 @@ use polars::prelude::*;
 use glob::glob;
 
 use mft_engine::config::AppConfig;
-use vortex_strategy::{BarAction, VortexStrategy};
+use vortex_strategy::VortexStrategy;
 
 // ─── Instrument specification table ───────────────────────────────────────
 

@@ -18,18 +18,15 @@ use mft_engine::{
     strategy::{ExitReason, StrategyEngine},
 };
 use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
 
 use nautilus_trading::strategy::{Strategy, StrategyCore, StrategyConfig};
+use nautilus_common::actor::DataActorCore;
 use nautilus_model::{
     enums::{OrderSide, TimeInForce},
-    identifiers::{InstrumentId, StrategyId, TraderId},
+    identifiers::{InstrumentId, StrategyId},
     data::{Bar, BarType},
-    orders::market::MarketOrder,
-    orders::OrderAny,
-    types::{Price, Quantity},
+    types::{Quantity},
 };
-use nautilus_common::actor::{DataActorCore, Actor, Component};
 use anyhow::Result;
 
 // ─── Per-symbol state ──────────────────────────────────────────────────────
@@ -55,10 +52,7 @@ impl SymbolState {
 
 /// Strategy that runs VORTEX-7 logic per symbol and issues Nautilus orders.
 ///
-/// Because the Nautilus Rust `Strategy` trait requires linking against the
-/// Python extension (pyo3) and a live MessageBus, for a pure-Rust backtest
-/// we use a *manual driver loop* inside `backtest.rs` instead of implementing
-/// the trait.  The struct is still self-contained and fully testable.
+/// Implements the required traits for NautilusTrader integration.
 #[derive(Debug)]
 pub struct VortexStrategy {
     pub core: StrategyCore,
@@ -67,6 +61,20 @@ pub struct VortexStrategy {
     /// Closed trade log (InstrumentId + exit reason + pnl_frac).
     pub trade_log: Vec<TradeRecord>,
     pub equity: f64,
+}
+
+impl Deref for VortexStrategy {
+    type Target = DataActorCore;
+    
+    fn deref(&self) -> &Self::Target {
+        &self.core
+    }
+}
+
+impl DerefMut for VortexStrategy {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.core
+    }
 }
 
 /// A completed trade record for reporting.
@@ -94,9 +102,18 @@ impl VortexStrategy {
             states.insert(instr_id, SymbolState::new(cfg));
         }
 
-        let config = StrategyConfig::new(strategy_id);
+        let config = StrategyConfig {
+            strategy_id: Some(strategy_id),
+            order_id_tag: None,
+            oms_type: None,
+            external_order_claims: None,
+            log_commands: false,
+            log_events: false,
+            ..Default::default()
+        };
+        let core = StrategyCore::new(config);
         Self {
-            core: StrategyCore::new(config), 
+            core,
             states,
             trade_log: vec![],
             equity: initial_equity,
@@ -156,41 +173,61 @@ impl VortexStrategy {
 impl nautilus_common::actor::DataActor for VortexStrategy {
     fn on_bar(&mut self, bar: &Bar) -> Result<()> {
         let instrument_id = bar.bar_type.instrument_id();
-        let state = match self.states.get_mut(&instrument_id) {
-            Some(s) => s,
-            None => return Ok(()),
-        };
-
+        
+        // Clone data we need before borrowing mutably
         let close = bar.close.as_f64();
-        let open  = bar.open.as_f64();
+        let open = bar.open.as_f64();
         let volume = bar.volume.as_f64();
-
+        
         if volume <= 0.0 || close <= 0.0 {
-            state.prev_close = Some(close);
+            // Update prev_close if we have a state
+            if let Some(state) = self.states.get_mut(&instrument_id) {
+                state.prev_close = Some(close);
+            }
             return Ok(());
         }
 
-        let log_return = match state.prev_close {
-            Some(prev) if prev > 0.0 => (close / prev).ln(),
-            _ => {
-                state.prev_close = Some(close);
-                return Ok(());
-            }
+        // Get state and calculate signal first
+        let (signal, prev_close) = {
+            let state = self.states.get_mut(&instrument_id).ok_or_else(|| {
+                anyhow::anyhow!("No state found for instrument {:?}", instrument_id)
+            })?;
+            
+            let log_return = match state.prev_close {
+                Some(prev) if prev > 0.0 => (close / prev).ln(),
+                _ => {
+                    state.prev_close = Some(close);
+                    return Ok(());
+                }
+            };
+            let prev_close = state.prev_close;
+            
+            let tick = MftTradeTick {
+                price: close,
+                volume,
+                is_buy: close >= open,
+                ts_ms: 0,
+            };
+
+            let signal = state.engine.on_bar(close, log_return, &tick);
+            (signal, prev_close)
         };
-        state.prev_close = Some(close);
-
-        let tick = MftTradeTick {
-            price: close,
-            volume,
-            is_buy: close >= open,
-            ts_ms: 0,
+        
+        // Update prev_close in state
+        if let Some(state) = self.states.get_mut(&instrument_id) {
+            state.prev_close = prev_close;
+        }
+        
+        // Simple position tracking - just use our internal state
+        let has_open_position = if let Some(state) = self.states.get(&instrument_id) {
+            state.qty_open != 0.0
+        } else {
+            false
         };
-
-        let signal = state.engine.on_bar(close, log_return, &tick);
-        let position = self.core.cache().position_for_order(instrument_id);
-
+        
+        // Handle signal for opening position
         if let Some(sig) = signal {
-            if position.is_none() {
+            if !has_open_position {
                 let equity = self.equity;
                 let base_qty = (equity * sig.size_frac / close).max(1e-8);
                 let side = if sig.direction == 1 { OrderSide::Buy } else { OrderSide::Sell };
@@ -202,35 +239,67 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
                     Some(TimeInForce::Gtc),
                     None, None, None, None, None, None,
                 );
-                self.core.submit_market_order(order);
+                let _ = self.submit_order(order, None, None);
                 
-                state.engine.open_position(sig.clone());
-                state.qty_open = if side == OrderSide::Buy { base_qty } else { -base_qty };
+                // Update state after order submission
+                if let Some(state) = self.states.get_mut(&instrument_id) {
+                    state.engine.open_position(sig.clone());
+                    state.qty_open = if side == OrderSide::Buy { base_qty } else { -base_qty };
+                }
             }
-        } else if let Some(ref pos) = state.engine.position {
-            let z = state.engine.ou.last_z().unwrap_or(0.0);
-            if let Some(reason) = state.engine.check_exit(close, z, pos.bars_held) {
-                if let Some(nautilus_pos) = position {
-                    let order = self.core.order_factory().market(
-                        instrument_id,
-                        if nautilus_pos.is_long() { OrderSide::Sell } else { OrderSide::Buy },
-                        nautilus_pos.quantity().abs(),
-                        Some(TimeInForce::Gtc),
-                        None, None, None, None, None, None,
-                    );
-                    self.core.submit_market_order(order);
-
-                    self.trade_log.push(TradeRecord {
-                        instrument_id,
-                        direction: if nautilus_pos.is_long() { 1 } else { -1 },
-                        entry_price: pos.signal.entry_price,
-                        exit_price: close,
-                        pnl_frac: (close - pos.signal.entry_price) / pos.signal.entry_price * (if nautilus_pos.is_long() { 1.0 } else { -1.0 }),
-                        exit_reason: reason.clone(),
-                        bars_held: pos.bars_held,
-                    });
-                    state.engine.close_position(close, reason);
-                    state.qty_open = 0.0;
+        } else if has_open_position {
+            // Check for exit conditions
+            let (should_exit, exit_side, exit_qty, trade_record) = {
+                if let Some(state) = self.states.get(&instrument_id) {
+                    if let Some(ref pos) = state.engine.position {
+                        let z = state.engine.ou.last_z().unwrap_or(0.0);
+                        if let Some(reason) = state.engine.check_exit(close, z, pos.bars_held) {
+                            let side = if state.qty_open > 0.0 { OrderSide::Sell } else { OrderSide::Buy };
+                            let qty = state.qty_open.abs();
+                            let record = TradeRecord {
+                                instrument_id,
+                                direction: if state.qty_open > 0.0 { 1 } else { -1 },
+                                entry_price: pos.signal.entry_price,
+                                exit_price: close,
+                                pnl_frac: (close - pos.signal.entry_price) / pos.signal.entry_price * (if state.qty_open > 0.0 { 1.0 } else { -1.0 }),
+                                exit_reason: reason.clone(),
+                                bars_held: pos.bars_held,
+                            };
+                            (true, side, qty, Some(record))
+                        } else {
+                            (false, OrderSide::Buy, 0.0, None)
+                        }
+                    } else {
+                        (false, OrderSide::Buy, 0.0, None)
+                    }
+                } else {
+                    (false, OrderSide::Buy, 0.0, None)
+                }
+            };
+            
+            if should_exit {
+                let order = self.core.order_factory().market(
+                    instrument_id,
+                    exit_side,
+                    Quantity::from(&format!("{:.8}", exit_qty)),
+                    Some(TimeInForce::Gtc),
+                    None, None, None, None, None, None,
+                );
+                let _ = self.submit_order(order, None, None);
+                
+                if let Some(record) = trade_record {
+                    self.trade_log.push(record);
+                }
+                
+                // Update state after order submission
+                if let Some(state) = self.states.get_mut(&instrument_id) {
+                    if let Some(ref pos) = state.engine.position {
+                        let z = state.engine.ou.last_z().unwrap_or(0.0);
+                        if let Some(reason) = state.engine.check_exit(close, z, pos.bars_held) {
+                            state.engine.close_position(close, reason);
+                            state.qty_open = 0.0;
+                        }
+                    }
                 }
             }
         }

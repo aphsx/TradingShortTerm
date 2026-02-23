@@ -4,7 +4,11 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(static ratio\" for price prediction\n\\(arxiv.org/abs/2602.00776\\)\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(python -m tests.nautilus_integration.backtest_runner:*)"
+      "Bash(python -m tests.nautilus_integration.backtest_runner:*)",
+      "WebFetch(domain:nautilustrader.io)",
+      "Bash(wc:*)",
+      "Bash(pip show:*)",
+      "Bash(python:*)"
     ]
   }
 }
