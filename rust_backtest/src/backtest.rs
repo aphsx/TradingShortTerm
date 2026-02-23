@@ -6,8 +6,8 @@ use nautilus_model::{
     data::{Data, QuoteTick},
     enums::{AccountType, BookType, OmsType},
     identifiers::{InstrumentId, Symbol, Venue},
-    instruments::{Instrument, InstrumentAny, CurrencyPair},
-    types::{Money, Price, Quantity},
+    instruments::{InstrumentAny, CurrencyPair},
+    types::{Money, Price, Quantity, Currency},
 };
 use nautilus_trading::examples::strategies::EmaCross;
 use polars::prelude::*;
@@ -90,16 +90,34 @@ async fn main() -> Result<()> {
         None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
     )?;
 
-    // Create a CurrencyPair manually with specific ID
-    let instrument = InstrumentAny::CurrencyPair(CurrencyPair::new(
-        instrument_id.clone(),
-        Price::from("0.01"),         // price_precision
-        Quantity::from("0.000001"),  // quantity_precision
-        Quantity::from("0.0001"),    // min_quantity
-        None,                        // max_quantity
-        None,                        // margin_requirement
-        Money::from("0 USD"),        // min_notional
-    )?);
+    // Create a basic currency pair instrument  
+    let instrument = InstrumentAny::CurrencyPair(
+        CurrencyPair::new(
+            instrument_id.clone(),
+            Symbol::from(symbol_str.as_str()),
+            Currency::from("BTC"),
+            Currency::from("USDT"),
+            8,  // price_precision
+            8,  // quantity_precision
+            Price::from("0.01"),         // price_increment
+            Quantity::from("0.000001"),  // size_increment
+            Some(Quantity::from("1.0")), // multiplier
+            None,                        // lot_size
+            Some(Quantity::from("0.0001")), // min_quantity
+            None,                        // max_quantity
+            Some(Money::from("1 USD")),   // min_notional
+            None,                        // max_notional
+            None,                        // min_price
+            None,                        // max_price
+            None,                        // margin_init
+            None,                        // margin_maint
+            None,                        // margin_buy
+            None,                        // margin_sell
+            None,                        // params
+            0.into(),                    // ts_event
+            0.into(),                    // ts_init
+        )
+    );
 
     engine.add_instrument(instrument)?;
 
@@ -114,7 +132,7 @@ async fn main() -> Result<()> {
     // 4. Run backtest
     println!("Running backtest engine...");
     engine.add_data(all_quotes, None, true, true);
-    engine.run(None, None, None, false);
+    engine.run(None, None, None, false)?;
 
     let result = engine.get_result();
     println!("--- Results ---");
