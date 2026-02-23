@@ -254,7 +254,11 @@ fn main() -> Result<()> {
         }
         println!("  {} → {} file(s) via '{}'", sym_str, files.len(), used_pattern);
 
-        // Lookup InstrumentId for this symbol
+        // Lookup spec and InstrumentId for this symbol
+        let spec = find_spec(sym_str.as_str()).unwrap();
+        let p_prec = spec.price_prec as usize;
+        let s_prec = spec.size_prec as usize;
+
         let instr_id = *instrument_ids
             .iter()
             .find(|id| id.symbol.as_str() == sym_str.as_str())
@@ -312,10 +316,10 @@ fn main() -> Result<()> {
                     // QuoteTick → L1 order book for execution
                     symbol_events.push(Data::from(QuoteTick::new(
                         instr_id,
-                        Price::from(&format!("{:.8}", bid)),
-                        Price::from(&format!("{:.8}", ask)),
-                        Quantity::from(&format!("{:.8}", v / 8.0)),
-                        Quantity::from(&format!("{:.8}", v / 8.0)),
+                        Price::from(&format!("{:.1$}", bid, p_prec)),
+                        Price::from(&format!("{:.1$}", ask, p_prec)),
+                        Quantity::from(&format!("{:.1$}", v / 8.0, s_prec)),
+                        Quantity::from(&format!("{:.1$}", v / 8.0, s_prec)),
                         ts_event,
                         ts_event,
                     )));
@@ -323,8 +327,8 @@ fn main() -> Result<()> {
                     // TradeTick → provides last-trade price for indicators
                     symbol_events.push(Data::from(TradeTick::new(
                         instr_id,
-                        Price::from(&format!("{:.8}", price)),
-                        Quantity::from(&format!("{:.8}", v / 4.0)),
+                        Price::from(&format!("{:.1$}", price, p_prec)),
+                        Quantity::from(&format!("{:.1$}", v / 4.0, s_prec)),
                         if idx % 2 == 0 { AggressorSide::Buyer } else { AggressorSide::Seller },
                         TradeId::new(&(grand_total_candles + event_base + idx as i64).to_string()),
                         ts_event,
@@ -340,11 +344,11 @@ fn main() -> Result<()> {
                         BarSpecification::new(1, BarAggregation::Minute, PriceType::Last),
                         AggregationSource::External,
                     ),
-                    Price::from(&format!("{:.8}", o)),
-                    Price::from(&format!("{:.8}", h)),
-                    Price::from(&format!("{:.8}", l)),
-                    Price::from(&format!("{:.8}", c)),
-                    Quantity::from(&format!("{:.8}", v)),
+                    Price::from(&format!("{:.1$}", o, p_prec)),
+                    Price::from(&format!("{:.1$}", h, p_prec)),
+                    Price::from(&format!("{:.1$}", l, p_prec)),
+                    Price::from(&format!("{:.1$}", c, p_prec)),
+                    Quantity::from(&format!("{:.1$}", v, s_prec)),
                     bar_ts,
                     bar_ts,
                 )));
