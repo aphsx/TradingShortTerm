@@ -8,8 +8,8 @@ name = "backtest"
 path = "src/backtest.rs"
 
 [[bin]]
-name = "fetch_data"
-path = "src/fetch_data.rs"
+name = "check_method"
+path = "src/check_method.rs"
 
 [dependencies]
 
