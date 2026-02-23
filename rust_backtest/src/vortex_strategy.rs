@@ -14,8 +14,9 @@
 use ahash::AHashMap;
 use mft_engine::{
     config::AppConfig,
-    models::ofi::TradeTick as MftTradeTick,
-    strategy::{ExitReason, StrategyEngine},
+    data::Kline,
+    strategy::{StrategyEngine, TradeSignal, ExitReason},
+    time_sync::TimeSync,
 };
 use std::ops::{Deref, DerefMut};
 
@@ -314,7 +315,7 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
         
         // Clone data we need before borrowing mutably
         let close = bar.close.as_f64();
-        let open = bar.open.as_f64();
+        let _open = bar.open.as_f64();
         let high = bar.high.as_f64();
         let low = bar.low.as_f64();
         let volume = bar.volume.as_f64();
@@ -336,7 +337,7 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
             // Update ATR with current bar data
             state.update_atr(high, low, close);
             
-            let log_return = match state.prev_close {
+            let _log_return = match state.prev_close {
                 Some(prev) if prev > 0.0 => (close / prev).ln(),
                 _ => {
                     state.prev_close = Some(close);
