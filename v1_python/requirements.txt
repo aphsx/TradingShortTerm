@@ -1,9 +1,0 @@
-websockets
-asyncio
-redis
-supabase
-numpy
-pandas
-python-dotenv
-ccxt
-pydantic>=2.0

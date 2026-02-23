@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
     let backtest_limit = std::env::var("BACKTEST_LIMIT").unwrap_or_else(|_| "43200".to_string());
     let limit_bars: i32 = backtest_limit.parse().unwrap_or(43200);
     
-    // Calculate duration based on interval
+    // Calculate duration based on interval with more data for better analysis
     let duration_hours = match interval.as_str() {
         "1m" => limit_bars / 60,
         "3m" => limit_bars * 3 / 60,
@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
         "15m" => limit_bars * 15 / 60,
         "30m" => limit_bars * 30 / 60,
         "1h" => limit_bars,
-        _ => 24, // default to 24 hours if unknown interval
+        _ => 48, // Increased to 48 hours for more data
     };
     
     // 3. Setup Config
@@ -101,7 +101,7 @@ async fn download_klines(
 ) -> Result<Vec<BinanceKline>> {
     let mut all_klines = Vec::new();
     let mut current_start = start_time;
-    const BATCH_TIME: i64 = 24 * 60 * 60 * 1000; // 24 hours per batch (max 1000 klines for 1m is ~16.6 hours, so this is fine)
+    const BATCH_TIME: i64 = 12 * 60 * 60 * 1000; // Reduced to 12 hours per batch for more frequent updates
 
     while current_start < end_time {
         let batch_end = std::cmp::min(current_start + BATCH_TIME, end_time);
@@ -161,8 +161,8 @@ async fn download_klines(
         use std::io::Write;
         std::io::stdout().flush().ok();
         
-        // Politeness delay
-        sleep(Duration::from_millis(250)).await;
+        // Reduced politeness delay for faster data updates
+        sleep(Duration::from_millis(150)).await;
     }
     println!();
 

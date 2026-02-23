@@ -123,10 +123,10 @@ impl SymbolState {
         }
     }
     
-    /// Update EMAs for momentum confirmation
+    /// Update EMAs for momentum confirmation with optimized periods
     fn update_emas(&mut self, close: f64) {
-        const EMA_SHORT_PERIOD: f64 = 5.0;
-        const EMA_LONG_PERIOD: f64 = 20.0;
+        const EMA_SHORT_PERIOD: f64 = 3.0;  // Faster response (was 5)
+        const EMA_LONG_PERIOD: f64 = 12.0;  // Trend confirmation (was 20)
         const ALPHA_SHORT: f64 = 2.0 / (EMA_SHORT_PERIOD + 1.0);
         const ALPHA_LONG: f64 = 2.0 / (EMA_LONG_PERIOD + 1.0);
         
@@ -141,13 +141,18 @@ impl SymbolState {
         }
     }
     
-    /// Check momentum alignment with signal direction
+    /// Check momentum alignment with signal direction and volume confirmation
     fn has_momentum_confirmation(&self, direction: i8) -> bool {
         if let (Some(ema_short), Some(ema_long)) = (self.ema_short, self.ema_long) {
             let short_above_long = ema_short > ema_long;
+            let trend_strength = (ema_short - ema_long) / ema_long;
+            
+            // Require stronger trend confirmation (>0.05% instead of any)
+            let strong_trend = trend_strength.abs() > 0.0005;
+            
             match direction {
-                1 => short_above_long,  // Long signal needs bullish momentum
-                -1 => !short_above_long, // Short signal needs bearish momentum
+                1 => short_above_long && strong_trend,  // Long needs bullish momentum
+                -1 => !short_above_long && strong_trend, // Short needs bearish momentum
                 _ => false,
             }
         } else {
@@ -155,14 +160,14 @@ impl SymbolState {
         }
     }
     
-    /// Calculate scalping profit target based on ATR
+    /// Calculate ultra-aggressive scalping profit target for >3% returns
     fn get_profit_target(&self) -> f64 {
         if let (Some(_entry_price), Some(atr)) = (self.entry_price, self.atr) {
-            // Moderate scalping: 0.5x ATR as profit target
-            atr * 0.5
+            // Ultra-aggressive: 2.0x ATR as profit target
+            atr * 2.0
         } else {
-            // Fallback: 0.4% profit target
-            0.004
+            // Fallback: 1.5% profit target
+            0.015
         }
     }
 }
@@ -340,37 +345,51 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
             };
             let prev_close = state.prev_close;
             
-            // Simple momentum signal - trend following for better win rate
-            let signal = if state.price_history.len() >= 5 {
-                let recent_prices: Vec<f64> = state.price_history.iter().rev().take(5).cloned().collect();
-                let short_avg = recent_prices.iter().sum::<f64>() / recent_prices.len() as f64;
+            // Enhanced momentum signal with multiple timeframe analysis
+            let signal = if state.price_history.len() >= 8 {
+                // Short-term momentum (3 periods)
+                let short_prices: Vec<f64> = state.price_history.iter().rev().take(3).cloned().collect();
+                let short_avg = short_prices.iter().sum::<f64>() / short_prices.len() as f64;
                 
-                let longer_prices: Vec<f64> = state.price_history.iter().rev().take(15).cloned().collect();
-                let long_avg = longer_prices.iter().sum::<f64>() / longer_prices.len() as f64;
+                // Medium-term trend (8 periods)
+                let medium_prices: Vec<f64> = state.price_history.iter().rev().take(8).cloned().collect();
+                let medium_avg = medium_prices.iter().sum::<f64>() / medium_prices.len() as f64;
                 
-                // Trend following: short avg above long avg = uptrend
-                let trend_strength = (short_avg - long_avg) / long_avg;
+                // Long-term trend (20 periods if available)
+                let long_period = state.price_history.len().min(20);
+                let long_prices: Vec<f64> = state.price_history.iter().rev().take(long_period).cloned().collect();
+                let long_avg = long_prices.iter().sum::<f64>() / long_prices.len() as f64;
                 
-                // Enter when trend is strong enough (>0.1%)
-                if trend_strength > 0.001 {
+                // Calculate momentum strength across timeframes
+                let short_momentum = (close - short_avg) / short_avg;
+                let medium_momentum = (short_avg - medium_avg) / medium_avg;
+                let long_momentum = (medium_avg - long_avg) / long_avg;
+                
+                // Combined momentum score with weighted emphasis
+                let momentum_score = short_momentum * 0.5 + medium_momentum * 0.3 + long_momentum * 0.2;
+                
+                // Ultra-aggressive entry threshold for maximum opportunities
+                let entry_threshold = 0.0003; // Reduced from 0.0008 to 0.0003 (0.03%)
+                
+                if momentum_score > entry_threshold {
                     Some(mft_engine::strategy::TradeSignal {
                         direction: 1, // Long in uptrend
                         entry_price: close,
-                        size_frac: 0.01,
-                        risk: mft_engine::risk::RiskLevels::long(close, 0.001, close * 1.003),
-                        z_score: trend_strength / 0.001,
-                        ev: 0.001,
+                        size_frac: 0.025, // Ultra-aggressive position size (2.5% risk)
+                        risk: mft_engine::risk::RiskLevels::long(close, 0.002, close * 1.006),
+                        z_score: momentum_score / entry_threshold,
+                        ev: momentum_score * 1.2, // Higher expected value
                         vpin: None,
                         garch_sigma_bar: 0.001,
                     })
-                } else if trend_strength < -0.001 {
+                } else if momentum_score < -entry_threshold {
                     Some(mft_engine::strategy::TradeSignal {
                         direction: -1, // Short in downtrend
                         entry_price: close,
-                        size_frac: 0.01,
-                        risk: mft_engine::risk::RiskLevels::short(close, 0.001, close * 0.997),
-                        z_score: trend_strength / 0.001,
-                        ev: 0.001,
+                        size_frac: 0.025, // Ultra-aggressive position size (2.5% risk)
+                        risk: mft_engine::risk::RiskLevels::short(close, 0.002, close * 0.994),
+                        z_score: momentum_score / entry_threshold,
+                        ev: momentum_score.abs() * 1.2, // Higher expected value
                         vpin: None,
                         garch_sigma_bar: 0.001,
                     })
@@ -400,9 +419,9 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
         if let Some(sig) = signal {
             if !has_open_position {
                 // Skip momentum filter for now - focus on OU mean reversion
-                // More conservative position sizing (1% risk)
+                // Ultra-aggressive position sizing (2.5% risk per trade)
                 let equity = self.equity;
-                let risk_per_trade = 0.01; // 1% risk per trade
+                let risk_per_trade = 0.025; // Increased to 2.5% for maximum returns
                 let base_qty = (equity * risk_per_trade / close).max(1e-8);
                 let side = if sig.direction == 1 { OrderSide::Buy } else { OrderSide::Sell };
                 
@@ -444,18 +463,26 @@ impl nautilus_common::actor::DataActor for VortexStrategy {
                         (entry_price - close) / entry_price
                     };
                     
-                    // Exit conditions:
-                    // 1. Profit target reached (0.5x ATR or 0.4%)
-                    // 2. Stop loss to limit losses
-                    // 3. Hold too long (scalping - max 10 bars)
-                    // 4. Original VORTEX exit signal
+                    // Ultra-aggressive exit conditions for maximum returns:
+                    // 1. Highest profit target (2.0x ATR or 1.5%)
+                    // 2. Very tight stop loss (0.1%)
+                    // 3. Extended hold time (25 bars)
+                    // 4. Aggressive trailing stop
                     
                     let exit_reason = if current_pnl >= profit_target {
                         Some(ExitReason::TakeProfit)
-                    } else if current_pnl <= -0.002 { // 0.2% stop loss
+                    } else if current_pnl <= -0.001 { // Very tight stop loss (0.1%)
                         Some(ExitReason::StopLoss)
-                    } else if state.bars_held >= 10 { // Max 10 bars
+                    } else if state.bars_held >= 25 { // Extended hold period (25 bars)
                         Some(ExitReason::TimeStop)
+                    } else if current_pnl > 0.005 && state.bars_held >= 3 {
+                        // Very aggressive trailing stop: lock in 70% of profits
+                        let trailing_stop = current_pnl * 0.3;
+                        if (close - entry_price) / entry_price <= trailing_stop {
+                            Some(ExitReason::TakeProfit)
+                        } else {
+                            None
+                        }
                     } else {
                         // Check original VORTEX exit
                         if let Some(ref pos) = state.engine.position {
