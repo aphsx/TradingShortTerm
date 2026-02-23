@@ -1,226 +1,204 @@
-use polars::prelude::*;
-use glob::glob;
+use anyhow::Result;
+use dotenvy::dotenv;
+use log::{info, LevelFilter};
+use std::path::PathBuf;
+use std::str::FromStr;
 
-// Import Nautilus for realistic backtest
 use nautilus_backtest::engine::BacktestEngine;
 use nautilus_backtest::config::BacktestEngineConfig;
 use nautilus_core::nanos::UnixNanos;
 use nautilus_model::{
-    enums::{OmsType, AggressorSide, AccountType, BookType, AggregationSource, BarAggregation, PriceType},
-    identifiers::{InstrumentId, Symbol, Venue, TradeId},
+    enums::{OmsType, AccountType, BookType},
+    identifiers::{InstrumentId, Symbol, Venue},
     instruments::{InstrumentAny, CryptoPerpetual},
     types::{Price, Quantity, Currency, Money},
-    data::{QuoteTick, TradeTick, Bar, BarType, BarSpecification, Data},
+    data::{Data, Bar, QuoteTick, TradeTick, BarType, BarSpecification, AggregationSource, BarAggregation, PriceType, AggressorSide, TradeId},
 };
-use nautilus_execution::models::fee::{FeeModelAny, MakerTakerFeeModel};
-use nautilus_execution::models::fill::FillModelAny;
-use nautilus_trading::{
-    examples::strategies::ema_cross::EmaCross,
+use nautilus_execution::models::{
+    fee::{FeeModelAny, MakerTakerFeeModel},
+    fill::{FillModelAny, StandardFillModel},
 };
-use anyhow::Result;
+use nautilus_core::models::latency::ConstantLatencyModel;
+use nautilus_trading::examples::strategies::ema_cross::EmaCross;
 use ahash::AHashMap;
 use rust_decimal::Decimal;
-use log::LevelFilter;
-use std::str::FromStr;
+use polars::prelude::*;
+use glob::glob;
 
+/// The "Professional" Nautilus Backtest Orchestrator
+/// 
+/// This script follows the Nautilus 0.53.0 standards:
+/// 1. Uses centralized configuration via .env
+/// 2. Implements high-fidelity data ingestion (OHLC -> Ticks)
+/// 3. Leverages Nautilus's internal matching engine and execution models
+/// 4. Organizes execution in a "Library-native" way
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("--- VORTEX-7 Offline Backtest ---");
-
-    // 1. Configuration - Read from root .env
+    // 0. Environment Setup
     dotenvy::from_filename("../.env").ok();
+    env_logger::builder().filter_level(LevelFilter::Info).init();
+    
+    info!("--- VORTEX-7 Professional Backtest (Nautilus Native) ---");
 
+    // 1. configuration
     let symbol_str = std::env::var("BACKTEST_SYMBOL").unwrap_or_else(|_| "SOLUSDT".to_string());
-    println!("Running backtest for: {}", symbol_str);
+    let initial_cash = std::env::var("BACKTEST_INITIAL_CASH").unwrap_or_else(|_| "100000".to_string()).parse::<f64>().unwrap_or(100000.0);
+    let latency_ms = std::env::var("BACKTEST_LATENCY_MS").unwrap_or_else(|_| "30".to_string()).parse::<u64>().unwrap_or(30);
+    let spread_bps = std::env::var("BACKTEST_SPREAD_BPS").unwrap_or_else(|_| "1.0".to_string()).parse::<f64>().unwrap_or(1.0);
     
-    // Extract base/quote (assuming USDT for now)
-    let base_currency = if symbol_str.ends_with("USDT") {
-        &symbol_str[..symbol_str.len()-4]
-    } else {
-        "BTC"
-    };
-    println!("Base currency: {}, Quote: USDT", base_currency);
-    
-    // 2. Load Local Data (Parquet)
-    let data_path = format!("data/{}/*.parquet", symbol_str);
-    let mut files: Vec<_> = glob(&data_path)?.filter_map(Result::ok).collect();
-    files.sort();
-    
-    if files.is_empty() {
-        return Err(anyhow::anyhow!("No data found in {}. Please run 'cargo run --bin fetch_data' first.", data_path));
-    }
+    info!("Symbol: {}, Initial Cash: {}, Latency: {}ms", symbol_str, initial_cash, latency_ms);
 
-    println!("Loading {} data files...", files.len());
+    // 2. Instrument & Venue Setup
+    let instrument_id = InstrumentId::new(Symbol::from(symbol_str.as_str()), Venue::from("SIM"));
     
-    // 3. Setup a working strategy (using EmaCross example)
-    let instrument_id = InstrumentId::new(
-        Symbol::from(symbol_str.as_ref()),
-        Venue::from("SIM")
-    );
-    
-    let ema_strategy = EmaCross::new(
-        instrument_id.clone(),
-        Quantity::from("0.001"), // min trade size
-        10, // fast ema period
-        20, // slow ema period
-    );
-    
-    let initial_cash = std::env::var("BACKTEST_INITIAL_CASH").unwrap_or_else(|_| "100000".to_string());
-    let currency_str = std::env::var("BACKTEST_CURRENCY").unwrap_or_else(|_| "USDT".to_string());
-    let initial_cash_f64: f64 = initial_cash.parse().unwrap_or(100000.0);
-    
-    // 4. Setup Nautilus backtest engine
     let mut config = BacktestEngineConfig::default();
-    config.logging.stdout_level = LevelFilter::Info; // Enable info logging to stdout
+    config.logging.stdout_level = LevelFilter::Info;
     let mut engine = BacktestEngine::new(config)?;
 
-    // Add Venue with 0.53.0 required 28 arguments
+    // Add Venue with Realistic Network Latency & Default Matching
     engine.add_venue(
         Venue::from("SIM"),
-        OmsType::Netting, // Change to Netting for realistic one-way position management
+        OmsType::Netting,
         AccountType::Margin,
-        BookType::L1_MBP, // Correct variant for 0.53.0
-        vec![Money::new(initial_cash_f64, Currency::from(currency_str.as_str()))],
+        BookType::L1_MBP,
+        vec![Money::new(initial_cash, Currency::from("USDT"))],
         None,
-
-        None,
+        Some(Box::new(ConstantLatencyModel::new(latency_ms * 1_000_000))),
         AHashMap::new(),
         vec![],
-        FillModelAny::default(),
-        FeeModelAny::MakerTaker(MakerTakerFeeModel), // Use maker/taker fees from instrument
+        FillModelAny::Standard(StandardFillModel::default()),
+        FeeModelAny::MakerTaker(MakerTakerFeeModel),
         None,
         None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
     )?;
 
-    // Create a basic instrument with 0.53.0 required 25 arguments
+    // Create Crypto Perpetual Instrument
     let instrument = CryptoPerpetual::new_checked(
         instrument_id.clone(),
         Symbol::from(symbol_str.as_str()),
-        Currency::from(base_currency),
+        Currency::from("SOL"), // Simplified base
         Currency::from("USDT"),
         Currency::from("USDT"),
         false, 1, 3,
         Price::from("0.1"), 
         Quantity::from("0.001"),
         None, None, None, None, None, None, None, None, None, None,
-        Some(Decimal::from_str("0.0002").unwrap()), // maker_fee 0.02%
-        Some(Decimal::from_str("0.0004").unwrap()), // taker_fee 0.04%
+        Some(Decimal::from_str("0.0002").unwrap()), 
+        Some(Decimal::from_str("0.0004").unwrap()), 
         None,
-        UnixNanos::default(), // ts_event
-        UnixNanos::default(), // ts_init
+        UnixNanos::default(),
+        UnixNanos::default(),
     )?;
-
     engine.add_instrument(InstrumentAny::from(instrument))?;
-    engine.add_strategy(ema_strategy)?;
 
-    println!("Backtest setup completed successfully!");
-    
-    // 5. Load data and run backtest
-    println!("Loading market data...");
+    // 3. Strategy Setup
+    let strategy = EmaCross::new(
+        instrument_id.clone(),
+        Quantity::from("0.001"),
+        10,
+        20,
+    );
+    engine.add_strategy(strategy)?;
+
+    // 4. Data Loading & Ingestion
+    // We let the engine manage the data once we've converted it to Data objects
+    info!("Loading historical data files from Parquet...");
+    let data_path = format!("data/{}/*.parquet", symbol_str);
+    let mut files: Vec<_> = glob(&data_path)?.filter_map(Result::ok).collect();
+    files.sort();
+
+    if files.is_empty() {
+        return Err(anyhow::anyhow!("No data found for {}", symbol_str));
+    }
+
     let mut total_events = 0;
-    
     for file_path in files {
-        let df = LazyFrame::scan_parquet(file_path, Default::default())?
-            .collect()?;
-        
-        println!("Processing file with {} rows...", df.height());
-        
+        let df = LazyFrame::scan_parquet(file_path, Default::default())?.collect()?;
+        info!("Processing {} ({} rows)...", symbol_str, df.height());
+
         let timestamps = df.column("open_time")?.i64()?;
         let opens = df.column("open")?.f64()?;
         let highs = df.column("high")?.f64()?;
         let lows = df.column("low")?.f64()?;
         let closes = df.column("close")?.f64()?;
         let volumes = df.column("volume")?.f64()?;
+
+        let mut events = Vec::with_capacity(df.height() * 9);
         
         for i in 0..df.height() {
             let ts_ms = timestamps.get(i).unwrap_or(0);
-            let open = opens.get(i).unwrap_or(0.0);
-            let high = highs.get(i).unwrap_or(0.0);
-            let low = lows.get(i).unwrap_or(0.0);
-            let close = closes.get(i).unwrap_or(0.0);
-            let volume = volumes.get(i).unwrap_or(0.0);
+            let o = opens.get(i).unwrap_or(0.0);
+            let h = highs.get(i).unwrap_or(0.0);
+            let l = lows.get(i).unwrap_or(0.0);
+            let c = closes.get(i).unwrap_or(0.0);
+            let v = volumes.get(i).unwrap_or(0.0);
+
+            // Time step setup
+            let ts_start_ns = ts_ms * 1_000_000;
             
-            let prices = [open, high, low, close];
-            let sub_step_ns = 15_000_000_000;
+            // Generate High-Fidelity Ticks (O -> H/L -> C)
+            let path = if c >= o { [o, l, h, c] } else { [o, h, l, c] };
+            for (idx, &price) in path.iter().enumerate() {
+                let ts_event = UnixNanos::from((ts_start_ns + (idx as i64 * 15_000_000_000)) as u64);
+                let dist = price * (spread_bps / 10000.0) / 2.0;
 
-            for (idx, &price) in prices.iter().enumerate() {
-                let ts_event = UnixNanos::from(((ts_ms * 1_000_000) + (idx as i64 * sub_step_ns)) as u64);
-                
-                let spread = price * 0.0001; 
-                let bid_str = format!("{:.1}", price - spread / 2.0);
-                let ask_str = format!("{:.1}", price + spread / 2.0);
-                let price_str = format!("{:.1}", price);
-                let size_str = format!("{:.3}", volume / 8.0);
-                
-                let quote = QuoteTick::new(
+                events.push(Data::from(QuoteTick::new(
                     instrument_id.clone(),
-                    Price::from(bid_str), 
-                    Price::from(ask_str),
-                    Quantity::from(size_str.clone()),
-                    Quantity::from(size_str),
+                    Price::from(price - dist),
+                    Price::from(price + dist),
+                    Quantity::from(v / 8.0),
+                    Quantity::from(v / 8.0),
                     ts_event,
                     ts_event,
-                );
-                engine.add_data(vec![Data::from(quote)], None, false, false);
+                )));
 
-                let trade = TradeTick::new(
+                events.push(Data::from(TradeTick::new(
                     instrument_id.clone(),
-                    Price::from(price_str),
-                    Quantity::from(format!("{:.3}", volume / 4.0)),
-                    if idx == 1 { AggressorSide::Buyer } else { AggressorSide::Seller },
-                    TradeId::new("1"), // Fixed instantiation
+                    Price::from(price),
+                    Quantity::from(v / 4.0),
+                    if idx % 2 == 0 { AggressorSide::Buyer } else { AggressorSide::Seller },
+                    TradeId::new(&(total_events + events.len() as i64).to_string()),
                     ts_event,
                     ts_event,
-                );
-                engine.add_data(vec![Data::from(trade)], None, false, false);
-                total_events += 2;
+                )));
             }
 
-            // Add Bar data (required for EmaCross strategy)
-            // A bar ending at T should have a timestamp of T + 60s
-            let bar_ts = UnixNanos::from(((ts_ms + 60_000) * 1_000_000) as u64);
-            let bar_type = BarType::new(
-                instrument_id.clone(),
-                BarSpecification::new(1, BarAggregation::Minute, PriceType::Last),
-                AggregationSource::External,
-            );
-            let bar = Bar::new(
-                bar_type,
-                Price::from(format!("{:.1}", open)),
-                Price::from(format!("{:.1}", high)),
-                Price::from(format!("{:.1}", low)),
-                Price::from(format!("{:.1}", close)),
-                Quantity::from(format!("{:.3}", volume)),
-                bar_ts, // ts_event
-                bar_ts, // ts_init
-            );
-            engine.add_data(vec![Data::from(bar)], None, false, false);
-            total_events += 1;
+            // Create Bar
+            let bar_ts = UnixNanos::from((ts_start_ns + 60_000_000_000) as u64);
+            events.push(Data::from(Bar::new(
+                BarType::new(instrument_id.clone(), BarSpecification::new(1, BarAggregation::Minute, PriceType::Last), AggregationSource::External),
+                Price::from(o), Price::from(h), Price::from(l), Price::from(c),
+                Quantity::from(v),
+                bar_ts, bar_ts,
+            )));
         }
+
+        engine.add_data(events, None, false, false);
+        total_events += df.height() as i64;
     }
-    
-    println!("Loaded {} market events.", total_events);
-    
-    println!("Running backtest engine...");
+
+    // 5. Execution
+    info!("Starting Nautilus Backtest Engine...");
     engine.run(None, None, None, false)?;
-    println!("Backtest execution finished.");
-    
-    // 6. Report results
-    // 6. Report results
+    info!("Backtest execution complete.");
+
+    // 6. Results
     let result = engine.get_result();
-    println!("Backtest Result Summary:");
-    println!("Total Events: {}", result.total_events);
-    println!("Total Orders: {}", result.total_orders);
-    println!("Total Positions: {}", result.total_positions);
+    println!("\n============================================");
+    println!("     NAUTILUS BACKTEST RESULTS SUMMARY");
+    println!("============================================");
+    println!("Instrument:       {}", symbol_str);
+    println!("Total Events:     {}", result.total_events);
+    println!("Total Orders:     {}", result.total_orders);
+    println!("Total Positions:  {}", result.total_positions);
     
     for (trader_id, pnls) in &result.stats_pnls {
-        println!("Trader: {}", trader_id);
+        println!("Trader:           {}", trader_id);
         for (venue, pnl) in pnls {
-            println!("  Venue: {}, PnL: {}", venue, pnl);
+            println!("  Venue [{}]: PnL = {:.4}", venue, pnl);
         }
     }
-    
-    println!("Backtest completed successfully!");
-    
+    println!("============================================\n");
+
     Ok(())
 }
