@@ -14,9 +14,7 @@
 use ahash::AHashMap;
 use mft_engine::{
     config::AppConfig,
-    data::Kline,
-    strategy::{StrategyEngine, TradeSignal, ExitReason},
-    time_sync::TimeSync,
+    strategy::{StrategyEngine, ExitReason},
 };
 use std::ops::{Deref, DerefMut};
 
