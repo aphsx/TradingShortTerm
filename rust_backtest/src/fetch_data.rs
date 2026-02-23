@@ -8,17 +8,29 @@ use std::path::{Path, PathBuf};
 use tokio::time::{sleep, Duration};
 
 #[derive(Debug, Deserialize)]
-struct BinanceAggTrade {
-    #[serde(rename = "a")]
-    agg_id: i64,
-    #[serde(rename = "p")]
-    price: String,
-    #[serde(rename = "q")]
-    qty: String,
-    #[serde(rename = "T")]
-    time: i64,
-    #[serde(rename = "m")]
-    is_buyer_maker: bool,
+struct BinanceKline {
+    #[serde(rename = "0")]
+    open_time: i64,
+    #[serde(rename = "1")]
+    open: String,
+    #[serde(rename = "2")]
+    high: String,
+    #[serde(rename = "3")]
+    low: String,
+    #[serde(rename = "4")]
+    close: String,
+    #[serde(rename = "5")]
+    volume: String,
+    #[serde(rename = "6")]
+    close_time: i64,
+    #[serde(rename = "7")]
+    quote_asset_volume: String,
+    #[serde(rename = "8")]
+    number_of_trades: i64,
+    #[serde(rename = "9")]
+    taker_buy_base_asset_volume: String,
+    #[serde(rename = "10")]
+    taker_buy_quote_asset_volume: String,
 }
 
 #[tokio::main]
@@ -37,13 +49,14 @@ async fn main() -> Result<()> {
     
     // 3. Setup Config
     let client = Client::new();
-    let duration_hours = 6; // Download last 6 hours for test (it's faster and less likely to hit limit)
+    let duration_hours = 24; // Download last 24 hours of klines
     let end_time = Utc::now().timestamp_millis();
     let start_time = end_time - (duration_hours * 3600 * 1000);
+    let interval = "1m"; // 1-minute candles
 
     println!("Target Symbols: {:?}", symbols);
     println!("Base URL: {}", base_url);
-    println!("Fetching last {} hours of data...", duration_hours);
+    println!("Fetching last {} hours of {} klines...", duration_hours, interval);
 
     for symbol in symbols {
         let symbol = symbol.trim();
@@ -54,14 +67,14 @@ async fn main() -> Result<()> {
         let dir_path = PathBuf::from("data").join(symbol);
         fs::create_dir_all(&dir_path)?;
 
-        let trades = download_agg_trades(&client, &base_url, symbol, start_time, end_time).await?;
+        let klines = download_klines(&client, &base_url, symbol, interval, start_time, end_time).await?;
         
-        if trades.is_empty() {
-            println!("No trades found for {}", symbol);
+        if klines.is_empty() {
+            println!("No klines found for {}", symbol);
             continue;
         }
 
-        let mut df = trades_to_dataframe(trades)?;
+        let mut df = klines_to_dataframe(klines)?;
         
         let file_name = format!("{}_{}.parquet", symbol, Utc::now().format("%Y%m%d_%H%M%S"));
         let file_path = dir_path.join(file_name);
@@ -75,23 +88,24 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn download_agg_trades(
+async fn download_klines(
     client: &Client,
     base_url: &str,
     symbol: &str,
+    interval: &str,
     start_time: i64,
     end_time: i64,
-) -> Result<Vec<BinanceAggTrade>> {
-    let mut all_trades = Vec::new();
+) -> Result<Vec<BinanceKline>> {
+    let mut all_klines = Vec::new();
     let mut current_start = start_time;
-    const BATCH_TIME: i64 = 15 * 60 * 1000; // 15 minutes per batch
+    const BATCH_TIME: i64 = 60 * 60 * 1000; // 1 hour per batch (1000 * 1min candles)
 
     while current_start < end_time {
         let batch_end = std::cmp::min(current_start + BATCH_TIME, end_time);
         
         let url = format!(
-            "{}/fapi/v1/aggTrades?symbol={}&startTime={}&endTime={}&limit=1000",
-            base_url, symbol, current_start, batch_end
+            "{}/fapi/v1/klines?symbol={}&interval={}&startTime={}&endTime={}&limit=1000",
+            base_url, symbol, interval, current_start, batch_end
         );
 
         let response = client.get(&url).send().await?;
@@ -108,15 +122,29 @@ async fn download_agg_trades(
             continue;
         }
 
-        let trades: Vec<BinanceAggTrade> = response.json().await?;
-        let count = trades.len();
+        let klines_raw: Vec<Vec<String>> = response.json().await?;
+        let count = klines_raw.len();
         
         if count > 0 {
-            let last_time = trades.last().unwrap().time;
-            all_trades.extend(trades);
+            let klines: Vec<BinanceKline> = klines_raw.into_iter().map(|arr| BinanceKline {
+                open_time: arr[0].parse().unwrap_or(0),
+                open: arr[1].clone(),
+                high: arr[2].clone(),
+                low: arr[3].clone(),
+                close: arr[4].clone(),
+                volume: arr[5].clone(),
+                close_time: arr[6].parse().unwrap_or(0),
+                quote_asset_volume: arr[7].clone(),
+                number_of_trades: arr[8].parse().unwrap_or(0),
+                taker_buy_base_asset_volume: arr[9].clone(),
+                taker_buy_quote_asset_volume: arr[10].clone(),
+            }).collect();
+            
+            let last_time = klines.last().unwrap().close_time;
+            all_klines.extend(klines);
             
             if count == 1000 {
-                // If we got max results, resume from the last trade time
+                // If we got max results, resume from the last kline close time
                 current_start = last_time + 1;
             } else {
                 current_start = batch_end;
@@ -125,7 +153,7 @@ async fn download_agg_trades(
             current_start = batch_end;
         }
 
-        print!("\r  Fetched {} trades for {}...", all_trades.len(), symbol);
+        print!("\r  Fetched {} klines for {}...", all_klines.len(), symbol);
         use std::io::Write;
         std::io::stdout().flush().ok();
         
@@ -134,22 +162,30 @@ async fn download_agg_trades(
     }
     println!();
 
-    Ok(all_trades)
+    Ok(all_klines)
 }
 
-fn trades_to_dataframe(trades: Vec<BinanceAggTrade>) -> Result<DataFrame> {
-    let agg_ids: Vec<i64> = trades.iter().map(|t| t.agg_id).collect();
-    let prices: Vec<f64> = trades.iter().map(|t| t.price.parse::<f64>().unwrap_or(0.0)).collect();
-    let qtys: Vec<f64> = trades.iter().map(|t| t.qty.parse::<f64>().unwrap_or(0.0)).collect();
-    let times: Vec<i64> = trades.iter().map(|t| t.time).collect();
-    let is_buyer_maker: Vec<bool> = trades.iter().map(|t| t.is_buyer_maker).collect();
+fn klines_to_dataframe(klines: Vec<BinanceKline>) -> Result<DataFrame> {
+    let open_times: Vec<i64> = klines.iter().map(|k| k.open_time).collect();
+    let opens: Vec<f64> = klines.iter().map(|k| k.open.parse::<f64>().unwrap_or(0.0)).collect();
+    let highs: Vec<f64> = klines.iter().map(|k| k.high.parse::<f64>().unwrap_or(0.0)).collect();
+    let lows: Vec<f64> = klines.iter().map(|k| k.low.parse::<f64>().unwrap_or(0.0)).collect();
+    let closes: Vec<f64> = klines.iter().map(|k| k.close.parse::<f64>().unwrap_or(0.0)).collect();
+    let volumes: Vec<f64> = klines.iter().map(|k| k.volume.parse::<f64>().unwrap_or(0.0)).collect();
+    let close_times: Vec<i64> = klines.iter().map(|k| k.close_time).collect();
+    let quote_asset_volumes: Vec<f64> = klines.iter().map(|k| k.quote_asset_volume.parse::<f64>().unwrap_or(0.0)).collect();
+    let number_of_trades: Vec<i64> = klines.iter().map(|k| k.number_of_trades).collect();
 
     let df = df!(
-        "agg_id" => agg_ids,
-        "price" => prices,
-        "qty" => qtys,
-        "time" => times,
-        "is_buyer_maker" => is_buyer_maker
+        "open_time" => open_times,
+        "open" => opens,
+        "high" => highs,
+        "low" => lows,
+        "close" => closes,
+        "volume" => volumes,
+        "close_time" => close_times,
+        "quote_asset_volume" => quote_asset_volumes,
+        "number_of_trades" => number_of_trades
     )?;
 
     Ok(df)

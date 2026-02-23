@@ -3,9 +3,9 @@ use anyhow::Result;
 use nautilus_backtest::{config::BacktestEngineConfig, engine::BacktestEngine};
 use nautilus_execution::models::{fee::FeeModelAny, fill::FillModelAny};
 use nautilus_model::{
-    data::{Data, QuoteTick},
-    enums::{AccountType, BookType, OmsType},
-    identifiers::{InstrumentId, Symbol, Venue},
+    data::{Data, QuoteTick, TradeTick},
+    enums::{AccountType, BookType, OmsType, AggressorSide},
+    identifiers::{InstrumentId, Symbol, Venue, TradeId},
     instruments::{InstrumentAny, CurrencyPair},
     types::{Money, Price, Quantity, Currency},
 };
@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
 
     println!("Loading {} data files...", files.len());
     
-    let mut all_quotes = Vec::new();
+    let mut all_trades = Vec::new();
     let instrument_id = InstrumentId::new(
         Symbol::from(symbol_str.as_ref()),
         Venue::from("SIM")
@@ -46,35 +46,44 @@ async fn main() -> Result<()> {
         let df = LazyFrame::scan_parquet(file_path, Default::default())?
             .collect()?;
         
-        let prices = df.column("price")?.f64()?;
-        let qtys = df.column("qty")?.f64()?;
-        let times = df.column("time")?.i64()?;
+        let opens = df.column("open")?.f64()?;
+        let highs = df.column("high")?.f64()?;
+        let lows = df.column("low")?.f64()?;
+        let closes = df.column("close")?.f64()?;
+        let volumes = df.column("volume")?.f64()?;
+        let times = df.column("close_time")?.i64()?;
 
         for i in 0..df.height() {
-            let p = prices.get(i).unwrap_or(0.0);
-            let q = qtys.get(i).unwrap_or(0.0);
+            let open = opens.get(i).unwrap_or(0.0);
+            let high = highs.get(i).unwrap_or(0.0);
+            let low = lows.get(i).unwrap_or(0.0);
+            let close = closes.get(i).unwrap_or(0.0);
+            let volume = volumes.get(i).unwrap_or(0.0);
             let t = times.get(i).unwrap_or(0);
 
             // Nautilus expects Nanoseconds
             let ts_ns = (t as u64) * 1_000_000;
             
-            let price = Price::from(&format!("{:.5}", p));
-            let qty = Quantity::from(&format!("{:.8}", q));
-
-            let quote = QuoteTick::new(
+            // Create synthetic trade ticks from OHLCV data
+            // Use close price as trade price and volume as trade size
+            let price = Price::from(&format!("{:.2}", close));
+            let qty = Quantity::from(&format!("{:.8}", volume));
+            let trade_id = TradeId::new(format!("trade_{}", i).as_str());
+            
+            let trade = TradeTick::new(
                 instrument_id.clone(),
-                price, // Bid Price
-                price, // Ask Price  
-                qty,   // Bid Size
-                qty,   // Ask Size
+                price,
+                qty,
+                AggressorSide::Buyer, // Assume buyer aggressor
+                trade_id,
                 ts_ns.into(),
                 ts_ns.into(),
             );
-            all_quotes.push(Data::Quote(quote));
+            all_trades.push(Data::Trade(trade));
         }
     }
 
-    println!("Loaded {} quotes.", all_quotes.len());
+    println!("Loaded {} trade ticks.", all_trades.len());
 
     // 3. Setup backtest engine
     let mut engine = BacktestEngine::new(BacktestEngineConfig::default())?;
@@ -131,7 +140,7 @@ async fn main() -> Result<()> {
 
     // 4. Run backtest
     println!("Running backtest engine...");
-    engine.add_data(all_quotes, None, true, true);
+    engine.add_data(all_trades, None, true, true);
     engine.run(None, None, None, false)?;
 
     let result = engine.get_result();
