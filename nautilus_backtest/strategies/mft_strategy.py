@@ -16,7 +16,8 @@ import numpy as np
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide
-from nautilus_trader.model.orders import MarketOrder
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
 
@@ -115,6 +116,9 @@ class MFTStrategy(Strategy):
     def __init__(self, config: MFTConfig):
         super().__init__(config)
         self.cfg = config
+
+        # Instrument
+        self._instrument_id = InstrumentId.from_str(config.instrument_id)
 
         # Price/volume buffers — เก็บ closing prices
         max_buf = config.ema_slow + config.rsi_period + 10
@@ -254,16 +258,26 @@ class MFTStrategy(Strategy):
         self._entry_price = price
         self._entry_side = side
 
-        # ส่ง Market Order ผ่าน Nautilus (ใน backtest จะ simulate fill)
-        # ใน run_backtest.py เราใช้ SimulatedExchangeClient
-        # order = self.order_factory.market(
-        #     instrument_id=self.instrument_id,
-        #     order_side=side,
-        #     quantity=Quantity.from_str(str(self.cfg.trade_size)),
-        # )
-        # self.submit_order(order)
+        # ส่ง Market Order ผ่าน Nautilus
+        order = self.order_factory.market(
+            instrument_id=self._instrument_id,
+            order_side=side,
+            quantity=Quantity.from_str(f"{self.cfg.trade_size:.3f}"),
+        )
+        self.submit_order(order)
 
     def _close_position(self):
+        # ส่ง Market Order ฝั่งตรงข้ามเพื่อปิด position
+        if self._entry_side is not None:
+            close_side = OrderSide.SELL if self._entry_side == OrderSide.BUY else OrderSide.BUY
+            order = self.order_factory.market(
+                instrument_id=self._instrument_id,
+                order_side=close_side,
+                quantity=Quantity.from_str(f"{self.cfg.trade_size:.3f}"),
+                reduce_only=True,
+            )
+            self.submit_order(order)
+
         self._position_open = False
         self._entry_price = 0.0
         self._entry_side = None

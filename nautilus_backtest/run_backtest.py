@@ -157,7 +157,7 @@ def run():
     bar_type = BarType.from_str(STRATEGY_CONFIG.bar_type)
     bars = df_to_nautilus_bars(df, bar_type, instrument)
     engine.add_data(bars)
-    print(f"    ✓ {len(bars)} bars added")
+    print(f"    [OK] {len(bars)} bars added")
 
     # 6. Add strategy
     print("\n[4] Adding strategy...")
@@ -195,7 +195,7 @@ def run():
         pass
 
     engine.dispose()
-    print("\n✓ Backtest complete")
+    print("\n[DONE] Backtest complete")
 
 
 if __name__ == "__main__":
