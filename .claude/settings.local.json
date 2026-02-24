@@ -2,8 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(python run_node.py)",
-      "Bash(python -c \"\nfrom nautilus_trader.backtest.node import BacktestNode\nfrom pathlib import Path\n\n# ดู attributes ทั้งหมดของ BacktestResult\nimport inspect\nfrom nautilus_trader.backtest.results import BacktestResult\n\nprint(''=== BacktestResult Attributes ==='')\nfor attr in dir(BacktestResult):\n    if not attr.startswith(''_''):\n        print(f''  - {attr}'')\n\")",
-      "Bash(python -c \"\nfrom nautilus_trader.backtest.node import BacktestNode\nfrom nautilus_trader.backtest.results import BacktestResult\n\n# ดู attributes ทั้งหมด\nresult = BacktestResult.__dict__\nprint(''=== BacktestResult Methods/Properties ==='')\nimport inspect\nmembers = inspect.getmembers(BacktestResult)\nfor name, obj in members:\n    if not name.startswith(''_'') and (''stat'' in name.lower() or ''fee'' in name.lower() or ''commission'' in name.lower() or ''pnl'' in name.lower()):\n        print(f''  {name}: {type(obj).__name__}'')\n\")"
+      "Bash(python nautilus_backtest/run_node.py)",
+      "Bash(python -c \"from nautilus_trader.backtest.engine import BacktestEngine; from nautilus_trader.backtest.results import BacktestResult; import inspect; print(''BacktestResult attributes:''); print([attr for attr in dir(BacktestResult) if not attr.startswith(''_'')])\")",
+      "Bash(python -c \"from nautilus_trader.backtest.results import BacktestResult; help(BacktestResult)\")"
     ],
     "deny": [],
     "ask": []

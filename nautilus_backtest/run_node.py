@@ -167,6 +167,17 @@ def print_nautilus_reports(node: BacktestNode, results: list) -> None:
             print(f"\n+-- BACKTEST RESULT")
         print("|")
 
+        # แสดงช่วงเวลา backtest (ข้อมูลจาก Nautilus)
+        if result.backtest_start and result.backtest_end:
+            from datetime import datetime, timezone
+            start_dt = datetime.fromtimestamp(result.backtest_start / 1_000_000_000, tz=timezone.utc)
+            end_dt = datetime.fromtimestamp(result.backtest_end / 1_000_000_000, tz=timezone.utc)
+            days = (result.backtest_end - result.backtest_start) / 1_000_000_000 / 86400
+
+            print(f"| Backtest Period   : {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}")
+            print(f"| Total Days        : {days:>12.2f} days")
+            print("|")
+
         # ใช้ข้อมูลจาก Nautilus โดยตรง
         if result.stats_pnls:
             pnl = result.stats_pnls.get('USDT', {})
