@@ -145,14 +145,10 @@ class MFTStrategy(Strategy):
     def on_start(self):
         bar_type = BarType.from_str(self.cfg.bar_type)
         self.subscribe_bars(bar_type)
-        self.log.info(
-            f"MFT Strategy started | "
-            f"EMA {self.cfg.ema_fast}/{self.cfg.ema_medium}/{self.cfg.ema_slow} | "
-            f"RSI {self.cfg.rsi_period} | RVOL {self.cfg.rvol_threshold}"
-        )
+        pass
 
     def on_stop(self):
-        self.log.info("MFT Strategy stopped")
+        pass
 
     # ------------------------------------------------------------------
     # Main bar handler
@@ -168,8 +164,6 @@ class MFTStrategy(Strategy):
 
         # รอ warmup ก่อน
         if self._bar_count < self.cfg.warmup_bars:
-            if self._bar_count % 50 == 0:
-                self.log.info(f"Warming up... {self._bar_count}/{self.cfg.warmup_bars}")
             return
 
         # คำนวณ indicators
@@ -228,20 +222,16 @@ class MFTStrategy(Strategy):
             sl = self._entry_price * (1 - self.cfg.stop_loss_pct)
             tp = self._entry_price * (1 + self.cfg.take_profit_pct)
             if close <= sl:
-                self.log.warning(f"STOP LOSS hit @ {close:.2f} (entry={self._entry_price:.2f})")
                 self._close_position()
             elif close >= tp:
-                self.log.info(f"TAKE PROFIT hit @ {close:.2f} (entry={self._entry_price:.2f})")
                 self._close_position()
 
         elif self._entry_side == OrderSide.SELL:
             sl = self._entry_price * (1 + self.cfg.stop_loss_pct)
             tp = self._entry_price * (1 - self.cfg.take_profit_pct)
             if close >= sl:
-                self.log.warning(f"STOP LOSS hit @ {close:.2f} (entry={self._entry_price:.2f})")
                 self._close_position()
             elif close <= tp:
-                self.log.info(f"TAKE PROFIT hit @ {close:.2f} (entry={self._entry_price:.2f})")
                 self._close_position()
 
     # ------------------------------------------------------------------
@@ -249,11 +239,7 @@ class MFTStrategy(Strategy):
     # ------------------------------------------------------------------
 
     def _enter(self, side: OrderSide, price: float):
-        self.log.info(
-            f"ENTRY {side.name} @ {price:.2f} | "
-            f"EMA {self._last_ema_fast:.1f}/{self._last_ema_medium:.1f}/{self._last_ema_slow:.1f} | "
-            f"RSI {self._last_rsi:.1f} | RVOL {self._last_rvol:.2f}x"
-        )
+
         self._position_open = True
         self._entry_price = price
         self._entry_side = side
