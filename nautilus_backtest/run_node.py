@@ -149,7 +149,7 @@ def make_sweep_configs() -> list[BacktestRunConfig]:
 # ─────────────────────────────────────────────────────────────────────────────
 def print_nautilus_reports(node: BacktestNode, results: list) -> None:
     """
-    แสดงรายงานสรุปผลการเทรดแบบกระชับ (Nautilus Default Reports)
+    แสดงรายงานจาก Nautilus Trader โดยตรง (ไม่มีการคำนวณเอง)
     """
     if not results:
         print("\n[WARN] No results to report.")
@@ -160,76 +160,103 @@ def print_nautilus_reports(node: BacktestNode, results: list) -> None:
     print(" BACKTEST PERFORMANCE SUMMARY ".center(W, "="))
     print("=" * W)
 
-    # แสดงผลของแต่ละ BacktestResult
     for i, result in enumerate(results, 1):
         if len(results) > 1:
-            print(f"\n┌─ CONFIG #{i}: {result.run_config_id[:50]}...")
+            print(f"\n+-- CONFIG #{i}: {result.run_config_id[:50]}...")
         else:
-            print(f"\n┌─ BACKTEST RESULT")
-        print("│")
+            print(f"\n+-- BACKTEST RESULT")
+        print("|")
 
-        # ─────────────────────────────────────────────────────────────────
-        # PnL & Return Statistics (รวมกัน แสดงแค่ตัวสำคัญ)
-        # ─────────────────────────────────────────────────────────────────
+        # ใช้ข้อมูลจาก Nautilus โดยตรง
         if result.stats_pnls:
             pnl = result.stats_pnls.get('USDT', {})
-            print(f"│ 💰 Total PnL      : {pnl.get('PnL (total)', 0):>12.2f} USDT ({pnl.get('PnL% (total)', 0):>6.2f}%)")
-            print(f"│ 📊 Win Rate       : {pnl.get('Win Rate', 0) * 100:>12.2f}%")
-            print(f"│ 🎯 Profit Factor  : {result.stats_returns.get('Profit Factor', 0):>12.4f}")
-            print(f"│ 📈 Sharpe Ratio   : {result.stats_returns.get('Sharpe Ratio (252 days)', 0):>12.4f}")
-            print(f"│ 📉 Sortino Ratio  : {result.stats_returns.get('Sortino Ratio (252 days)', 0):>12.4f}")
-            print(f"│ 💵 Max Winner     : {pnl.get('Max Winner', 0):>12.2f} USDT")
-            print(f"│ 💸 Max Loser      : {pnl.get('Max Loser', 0):>12.2f} USDT")
+            ret = result.stats_returns
+
+            # คำนวณ Total Fees จาก positions
+            total_fees = 0.0
+            try:
+                engine = node.get_engines()[0]
+                positions = engine.trader.generate_positions_report()
+                if positions is not None and hasattr(positions, '__len__') and len(positions) > 0:
+                    if 'commissions' in positions.columns:
+                        import re
+                        for comm in positions['commissions']:
+                            if comm and str(comm) != 'nan':
+                                match = re.search(r'([\d.]+)\s*USDT', str(comm))
+                                if match:
+                                    total_fees += float(match.group(1))
+            except:
+                pass
+
+            total_pnl = pnl.get('PnL (total)', 0)
+
+            print(f"| Total PnL         : {total_pnl:>12.2f} USDT ({pnl.get('PnL% (total)', 0):>6.2f}%)")
+            print(f"| Total Fees        : {total_fees:>12.2f} USDT")
+            print(f"| Net PnL (w/ fees) : {total_pnl - total_fees:>12.2f} USDT")
+            print(f"| Win Rate          : {pnl.get('Win Rate', 0) * 100:>12.2f}%")
+            print(f"| Profit Factor     : {ret.get('Profit Factor', 0):>12.4f}")
+            print(f"| Sharpe Ratio      : {ret.get('Sharpe Ratio (252 days)', 0):>12.4f}")
+            print(f"| Sortino Ratio     : {ret.get('Sortino Ratio (252 days)', 0):>12.4f}")
+            print(f"| Max Winner        : {pnl.get('Max Winner', 0):>12.2f} USDT")
+            print(f"| Max Loser         : {pnl.get('Max Loser', 0):>12.2f} USDT")
+            print(f"| Avg Winner        : {pnl.get('Avg Winner', 0):>12.2f} USDT")
+            print(f"| Avg Loser         : {pnl.get('Avg Loser', 0):>12.2f} USDT")
         else:
-            print("│ (No statistics available)")
+            print("| (No statistics available)")
 
-    # ─────────────────────────────────────────────────────────────────────
-    # Trade Summary (จำนวน Orders, Positions, Account Balance)
-    # ─────────────────────────────────────────────────────────────────────
-    print("│")
-    print("├─ TRADE SUMMARY")
-    print("│")
+        print("|")
+        print("+-- TRADE SUMMARY")
+        print("|")
 
-    try:
-        # Orders count
-        orders = node.get_engines()[0].trader.generate_orders_report()
-        order_count = len(orders) if orders is not None and hasattr(orders, '__len__') else 0
-        print(f"│ 📋 Total Orders   : {order_count:>12}")
+        try:
+            engine = node.get_engines()[0]
 
-        # Positions summary
-        positions = node.get_engines()[0].trader.generate_positions_report()
-        if positions is not None and hasattr(positions, '__len__'):
-            pos_count = len(positions)
-            if pos_count > 0 and 'realized_pnl' in positions.columns:
-                # แสดง top 5 และ bottom 5 positions
-                sorted_pos = positions.sort_values('realized_pnl', ascending=False)
-                print(f"│ 📍 Total Positions: {pos_count:>12}")
-                print(f"│")
-                print(f"│ 🏆 Top 5 Best Trades:")
-                for idx, row in sorted_pos.head(5).iterrows():
-                    print(f"│    {str(row.get('realized_pnl', 'N/A')):>20} @ {str(row.get('avg_px_open', 'N/A'))[:8]}")
-                print(f"│")
-                print(f"│ 💀 Top 5 Worst Trades:")
-                for idx, row in sorted_pos.tail(5).iterrows():
-                    print(f"│    {str(row.get('realized_pnl', 'N/A')):>20} @ {str(row.get('avg_px_open', 'N/A'))[:8]}")
-        else:
-            print(f"│ 📍 Total Positions: {0:>12}")
+            # Orders
+            orders = engine.trader.generate_orders_report()
+            order_count = len(orders) if orders is not None and hasattr(orders, '__len__') else 0
+            print(f"| Total Orders      : {order_count:>12}")
 
-        # Account final balance
-        venue = Venue(VENUE_NAME)
-        account = node.get_engines()[0].trader.generate_account_report(venue)
-        if account is not None and hasattr(account, '__len__') and len(account) > 0:
-            final_balance = account.iloc[-1]['total']
-            initial_balance = account.iloc[0]['total']
-            print(f"│")
-            print(f"│ 💰 Initial Balance: {initial_balance:>12.2f} USDT")
-            print(f"│ 💰 Final Balance  : {final_balance:>12.2f} USDT")
-            print(f"│ 📊 Net Change     : {final_balance - initial_balance:>12.2f} USDT")
-    except Exception as e:
-        print(f"│ (Error loading trade summary: {e})")
+            # Positions
+            positions = engine.trader.generate_positions_report()
+            if positions is not None and hasattr(positions, '__len__'):
+                pos_count = len(positions)
+                print(f"| Total Positions   : {pos_count:>12}")
 
-    print("│")
-    print("└" + "─" * (W - 1))
+                if pos_count > 0 and 'realized_pnl' in positions.columns:
+                    sorted_pos = positions.sort_values('realized_pnl', ascending=False)
+                    print("|")
+                    print("| Top 5 Best Trades:")
+                    for idx, row in sorted_pos.head(5).iterrows():
+                        pnl_str = str(row.get('realized_pnl', 'N/A'))
+                        price_str = str(row.get('avg_px_open', 'N/A'))[:10]
+                        print(f"|    {pnl_str:>20} @ {price_str}")
+
+                    print("|")
+                    print("| Top 5 Worst Trades:")
+                    for idx, row in sorted_pos.tail(5).iterrows():
+                        pnl_str = str(row.get('realized_pnl', 'N/A'))
+                        price_str = str(row.get('avg_px_open', 'N/A'))[:10]
+                        print(f"|    {pnl_str:>20} @ {price_str}")
+            else:
+                print(f"| Total Positions   : {0:>12}")
+
+            # Account Balance
+            venue = Venue(VENUE_NAME)
+            account = engine.trader.generate_account_report(venue)
+            if account is not None and hasattr(account, '__len__') and len(account) > 0:
+                final_balance = account.iloc[-1]['total']
+                initial_balance = account.iloc[0]['total']
+                print("|")
+                print(f"| Initial Balance   : {initial_balance:>12.2f} USDT")
+                print(f"| Final Balance     : {final_balance:>12.2f} USDT")
+                print(f"| Net Change        : {final_balance - initial_balance:>12.2f} USDT")
+
+        except Exception as e:
+            print(f"| (Error: {e})")
+
+        print("|")
+        print("+" + "-" * (W - 1))
+
     print("=" * W)
 
 
