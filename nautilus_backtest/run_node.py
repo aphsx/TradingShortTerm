@@ -145,42 +145,92 @@ def make_sweep_configs() -> list[BacktestRunConfig]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Nautilus Default Reports — ไม่มี custom logic เลย เรียก API โดยตรง
+# Nautilus Default Reports — กระชับ ไม่ซ้ำซาก
 # ─────────────────────────────────────────────────────────────────────────────
-def print_nautilus_reports(results: list) -> None:
+def print_nautilus_reports(node: BacktestNode, results: list) -> None:
     """
-    แสดงรายงานสรุปผลการเทรด (Default Nautilus Statistics)
+    แสดงรายงานสรุปผลการเทรดแบบกระชับ (Nautilus Default Reports)
     """
     if not results:
         print("\n[WARN] No results to report.")
         return
 
-    print("\n" + "=" * 72)
-    print(" NAUTILUS TRADER PERFORMANCE SUMMARY ".center(72, "="))
-    print("=" * 72)
+    W = 100
+    print("\n" + "=" * W)
+    print(" BACKTEST PERFORMANCE SUMMARY ".center(W, "="))
+    print("=" * W)
 
     # แสดงผลของแต่ละ BacktestResult
     for i, result in enumerate(results, 1):
         if len(results) > 1:
-            print(f"\n[ RESULT #{i}: {result.run_config_id} ]")
+            print(f"\n┌─ CONFIG #{i}: {result.run_config_id[:50]}...")
+        else:
+            print(f"\n┌─ BACKTEST RESULT")
+        print("│")
 
-        # แสดงสถิติ PnL (Gross/Net Profit, Fees, etc.)
-        print("\n[ PNL STATISTICS ]")
+        # ─────────────────────────────────────────────────────────────────
+        # PnL & Return Statistics (รวมกัน แสดงแค่ตัวสำคัญ)
+        # ─────────────────────────────────────────────────────────────────
         if result.stats_pnls:
-            for key, value in result.stats_pnls.items():
-                print(f"  {key}: {value}")
+            pnl = result.stats_pnls.get('USDT', {})
+            print(f"│ 💰 Total PnL      : {pnl.get('PnL (total)', 0):>12.2f} USDT ({pnl.get('PnL% (total)', 0):>6.2f}%)")
+            print(f"│ 📊 Win Rate       : {pnl.get('Win Rate', 0) * 100:>12.2f}%")
+            print(f"│ 🎯 Profit Factor  : {result.stats_returns.get('Profit Factor', 0):>12.4f}")
+            print(f"│ 📈 Sharpe Ratio   : {result.stats_returns.get('Sharpe Ratio (252 days)', 0):>12.4f}")
+            print(f"│ 📉 Sortino Ratio  : {result.stats_returns.get('Sortino Ratio (252 days)', 0):>12.4f}")
+            print(f"│ 💵 Max Winner     : {pnl.get('Max Winner', 0):>12.2f} USDT")
+            print(f"│ 💸 Max Loser      : {pnl.get('Max Loser', 0):>12.2f} USDT")
         else:
-            print("  (No PnL statistics available)")
+            print("│ (No statistics available)")
 
-        # แสดงสถิติ Returns (Sharpe, Max DD, etc.)
-        print("\n[ RETURN STATISTICS ]")
-        if result.stats_returns:
-            for key, value in result.stats_returns.items():
-                print(f"  {key}: {value}")
+    # ─────────────────────────────────────────────────────────────────────
+    # Trade Summary (จำนวน Orders, Positions, Account Balance)
+    # ─────────────────────────────────────────────────────────────────────
+    print("│")
+    print("├─ TRADE SUMMARY")
+    print("│")
+
+    try:
+        # Orders count
+        orders = node.get_engines()[0].trader.generate_orders_report()
+        order_count = len(orders) if orders is not None and hasattr(orders, '__len__') else 0
+        print(f"│ 📋 Total Orders   : {order_count:>12}")
+
+        # Positions summary
+        positions = node.get_engines()[0].trader.generate_positions_report()
+        if positions is not None and hasattr(positions, '__len__'):
+            pos_count = len(positions)
+            if pos_count > 0 and 'realized_pnl' in positions.columns:
+                # แสดง top 5 และ bottom 5 positions
+                sorted_pos = positions.sort_values('realized_pnl', ascending=False)
+                print(f"│ 📍 Total Positions: {pos_count:>12}")
+                print(f"│")
+                print(f"│ 🏆 Top 5 Best Trades:")
+                for idx, row in sorted_pos.head(5).iterrows():
+                    print(f"│    {str(row.get('realized_pnl', 'N/A')):>20} @ {str(row.get('avg_px_open', 'N/A'))[:8]}")
+                print(f"│")
+                print(f"│ 💀 Top 5 Worst Trades:")
+                for idx, row in sorted_pos.tail(5).iterrows():
+                    print(f"│    {str(row.get('realized_pnl', 'N/A')):>20} @ {str(row.get('avg_px_open', 'N/A'))[:8]}")
         else:
-            print("  (No return statistics available)")
+            print(f"│ 📍 Total Positions: {0:>12}")
 
-    print("\n" + "=" * 72)
+        # Account final balance
+        venue = Venue(VENUE_NAME)
+        account = node.get_engines()[0].trader.generate_account_report(venue)
+        if account is not None and hasattr(account, '__len__') and len(account) > 0:
+            final_balance = account.iloc[-1]['total']
+            initial_balance = account.iloc[0]['total']
+            print(f"│")
+            print(f"│ 💰 Initial Balance: {initial_balance:>12.2f} USDT")
+            print(f"│ 💰 Final Balance  : {final_balance:>12.2f} USDT")
+            print(f"│ 📊 Net Change     : {final_balance - initial_balance:>12.2f} USDT")
+    except Exception as e:
+        print(f"│ (Error loading trade summary: {e})")
+
+    print("│")
+    print("└" + "─" * (W - 1))
+    print("=" * W)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -212,7 +262,7 @@ def run():
     node = BacktestNode(configs=configs)
     results = node.run()
 
-    print_nautilus_reports(results)
+    print_nautilus_reports(node, results)
 
     print("=" * W)
     print("  [DONE] All Nautilus default reports shown".center(W))
