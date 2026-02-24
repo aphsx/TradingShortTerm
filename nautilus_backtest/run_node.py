@@ -226,137 +226,73 @@ def make_full_sweep() -> list[BacktestRunConfig]:
 # Reports
 # ─────────────────────────────────────────────────────────────────────────────
 def print_reports(node: BacktestNode, results: list) -> None:
+    """แสดง Nautilus native output ตรงๆ — stats dicts + full DataFrames"""
+    import pandas as pd
+
     if not results:
         print("\n[WARN] No results.")
         return
 
-    W = 100
-    print("\n" + "=" * W)
-    print(" BACKTEST PERFORMANCE SUMMARY ".center(W, "="))
-    print("=" * W)
+    pd.set_option("display.max_columns", None)
+    pd.set_option("display.max_rows", None)
+    pd.set_option("display.width", 200)
+    pd.set_option("display.float_format", "{:.6f}".format)
 
-    summary_data = []
     engines = node.get_engines()
 
     for i, result in enumerate(results):
-        run_id = result.run_config_id[:60] if result.run_config_id else f"#{i+1}"
+        W = 120
+        run_id = result.run_config_id if result.run_config_id else f"Run #{i+1}"
+        print("\n" + "=" * W)
+        print(f"  RUN : {run_id}".center(W))
+        print("=" * W)
 
-        print(f"\n{'─' * W}")
-        print(f"  [{i+1}] {run_id}")
-        print(f"{'─' * W}")
-
-        # Period
-        if result.backtest_start and result.backtest_end:
-            from datetime import datetime, timezone
-            s = datetime.fromtimestamp(result.backtest_start / 1e9, tz=timezone.utc)
-            e = datetime.fromtimestamp(result.backtest_end / 1e9, tz=timezone.utc)
-            days = (result.backtest_end - result.backtest_start) / 1e9 / 86400
-            print(f"  Period : {s.strftime('%Y-%m-%d')} → {e.strftime('%Y-%m-%d')} ({days:.0f} days)")
-
-        total_pnl = 0.0
-        total_fees = 0.0
-        win_rate = 0.0
-        sharpe = 0.0
-        sortino = 0.0
-        pf = 0.0
-
+        # ── 1. PnL Statistics (Nautilus native dict) ──────────────────────────
         if result.stats_pnls:
-            pnl_stats = result.stats_pnls.get('USDT', {})
-            ret_stats = result.stats_returns or {}
+            print("\n[Nautilus] stats_pnls:")
+            for currency, stats in result.stats_pnls.items():
+                print(f"  Currency: {currency}")
+                for k, v in stats.items():
+                    print(f"    {k:<45}: {v}")
 
-            total_pnl = pnl_stats.get('PnL (total)', 0)
-            win_rate = pnl_stats.get('Win Rate', 0) * 100
-            pf = ret_stats.get('Profit Factor', 0)
-            sharpe = ret_stats.get('Sharpe Ratio (252 days)', 0)
-            sortino = ret_stats.get('Sortino Ratio (252 days)', 0)
+        # ── 2. Returns Statistics (Nautilus native dict) ──────────────────────
+        if result.stats_returns:
+            print("\n[Nautilus] stats_returns:")
+            for k, v in result.stats_returns.items():
+                print(f"  {k:<45}: {v}")
 
-            # Fees
-            try:
-                engine = engines[i] if i < len(engines) else engines[0]
-                positions = engine.trader.generate_positions_report()
-                if positions is not None and len(positions) > 0:
-                    if 'commissions' in positions.columns:
-                        import re
-                        for comm in positions['commissions']:
-                            if comm and str(comm) != 'nan':
-                                match = re.search(r'([\d.]+)\s*USDT', str(comm))
-                                if match:
-                                    total_fees += float(match.group(1))
-            except Exception:
-                pass
-
-            net = total_pnl - total_fees
-            pnl_pct = pnl_stats.get('PnL% (total)', 0)
-
-            avg_w = pnl_stats.get('Avg Winner', 0)
-            avg_l = abs(pnl_stats.get('Avg Loser', 0))
-            rr = avg_w / avg_l if avg_l > 0 else 0
-
-            print(f"  PnL    : {total_pnl:>+10.2f} USDT ({pnl_pct:>+.2f}%)")
-            print(f"  Fees   : {total_fees:>10.2f} USDT")
-            print(f"  Net    : {net:>+10.2f} USDT")
-            print(f"  WinRate: {win_rate:>6.1f}%  |  PF: {pf:.3f}  |  R:R: {rr:.2f}x")
-            print(f"  Sharpe : {sharpe:>+.4f}  |  Sortino: {sortino:>+.4f}")
-            print(f"  AvgWin : {avg_w:>+.2f}  |  AvgLoss: {pnl_stats.get('Avg Loser', 0):>+.2f}")
-            print(f"  MaxWin : {pnl_stats.get('Max Winner', 0):>+.2f}  |  MaxLoss: {pnl_stats.get('Max Loser', 0):>+.2f}")
-
-            summary_data.append({
-                'id': run_id, 'net': net, 'wr': win_rate,
-                'sharpe': sharpe, 'pf': pf, 'rr': rr,
-            })
-
-        # Trade count + balance
+        # ── 3. Orders Report (Nautilus DataFrame) ─────────────────────────────
         try:
             engine = engines[i] if i < len(engines) else engines[0]
-            orders = engine.trader.generate_orders_report()
-            positions = engine.trader.generate_positions_report()
-            n_ord = len(orders) if orders is not None else 0
-            n_pos = len(positions) if positions is not None else 0
-            print(f"  Orders : {n_ord}  |  Positions: {n_pos}")
 
+            orders_df = engine.trader.generate_orders_report()
+            print(f"\n[Nautilus] generate_orders_report()  ({len(orders_df) if orders_df is not None else 0} rows):")
+            if orders_df is not None and len(orders_df) > 0:
+                print(orders_df.to_string())
+            else:
+                print("  (no orders)")
+
+            # ── 4. Positions Report (Nautilus DataFrame) ──────────────────────
+            positions_df = engine.trader.generate_positions_report()
+            print(f"\n[Nautilus] generate_positions_report()  ({len(positions_df) if positions_df is not None else 0} rows):")
+            if positions_df is not None and len(positions_df) > 0:
+                print(positions_df.to_string())
+            else:
+                print("  (no positions)")
+
+            # ── 5. Account Report (Nautilus DataFrame) ────────────────────────
             venue = Venue(VENUE_NAME)
-            account = engine.trader.generate_account_report(venue)
-            if account is not None and len(account) > 0:
-                try:
-                    final_val = account.iloc[-1]['total']
-                    init_val = account.iloc[0]['total']
-                    # Handle both numeric and string types
-                    if isinstance(final_val, str):
-                        final_bal = float(final_val.replace(',', ''))
-                    else:
-                        final_bal = float(final_val)
-                    if isinstance(init_val, str):
-                        init_bal = float(init_val.replace(',', ''))
-                    else:
-                        init_bal = float(init_val)
-                    print(f"  Balance: {init_bal:,.2f} → {final_bal:,.2f} USDT ({final_bal - init_bal:>+.2f})")
-                except Exception:
-                    pass
+            account_df = engine.trader.generate_account_report(venue)
+            print(f"\n[Nautilus] generate_account_report('{VENUE_NAME}')  ({len(account_df) if account_df is not None else 0} rows):")
+            if account_df is not None and len(account_df) > 0:
+                print(account_df.to_string())
+            else:
+                print("  (no account data)")
+
         except Exception as e:
-            print(f"  (Report error: {e})")
+            print(f"  (Engine report error: {e})")
 
-    # Comparison table
-    if len(summary_data) > 1:
-        print(f"\n{'=' * W}")
-        print(" RANKING ".center(W, "="))
-        print(f"{'=' * W}")
-        print(f"  {'#':<3} {'Config':<30} {'Net PnL':>10} {'Win%':>7} {'Sharpe':>8} {'PF':>7} {'R:R':>6}")
-        print(f"  {'─'*3} {'─'*30} {'─'*10} {'─'*7} {'─'*8} {'─'*7} {'─'*6}")
-
-        summary_data.sort(key=lambda x: x['net'], reverse=True)
-        for rank, d in enumerate(summary_data, 1):
-            medal = "🏆" if rank == 1 else "  "
-            print(
-                f"{medal}{rank:<3} {d['id'][:28]:<30} "
-                f"{d['net']:>+9.2f} {d['wr']:>6.1f}% "
-                f"{d['sharpe']:>+8.4f} {d['pf']:>7.3f} {d['rr']:>5.2f}x"
-            )
-
-        best = summary_data[0]
-        print(f"\n  🏆 Best: {best['id']}")
-        print(f"     Net: {best['net']:+.2f} | WR: {best['wr']:.1f}% | Sharpe: {best['sharpe']:+.4f} | R:R: {best['rr']:.2f}x")
-
-    print(f"\n{'=' * W}\n")
+        print("\n" + "=" * W)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
