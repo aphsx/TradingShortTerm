@@ -103,7 +103,7 @@ def make_config(
     run_id: str = "LIVE-DEFAULT",
 ) -> BacktestRunConfig:
 
-    bar_type_str = f"{INSTRUMENT_ID_STR}-1-MINUTE-LAST-EXTERNAL"
+    bar_type_str = f"{INSTRUMENT_ID_STR}-5-MINUTE-LAST-EXTERNAL"
 
     return BacktestRunConfig(
         dispose_on_completion=False,

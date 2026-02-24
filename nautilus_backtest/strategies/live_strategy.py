@@ -10,7 +10,7 @@ Strategy นี้ port logic จาก live_engine มาทุกส่วน:
 
 เนื่องจาก Nautilus backtest รับ Bar (OHLCV) ไม่ใช่ tick/aggTrade
 จึงปรับดังนี้:
-  - ใช้ 1-MINUTE Bar เป็น "volume bar" ที่สมมูล
+  - ใช้ 5-MINUTE Bar (ตรงกับ live bot จริง)
   - CVD ประมาณจาก (close - open) / range ต่อ bar
   - OBI ไม่มีข้อมูลจริง → ตั้งเป็น 0 (ไม่ boost confidence)
   - CircuitBreaker ใช้ consecutive loss tracker เหมือน live
@@ -39,7 +39,7 @@ from nautilus_trader.trading.strategy import Strategy
 
 class LiveStrategyConfig(StrategyConfig, frozen=True):
     instrument_id: str = "BTCUSDT-PERP.BINANCE"
-    bar_type: str = "BTCUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL"
+    bar_type: str = "BTCUSDT-PERP.BINANCE-5-MINUTE-LAST-EXTERNAL"
 
     # ── Indicator Periods (live_engine/config.py) ──
     ema_fast: int = 9
