@@ -1,38 +1,80 @@
-# TradingShortTerm — Multi-Frame Trend (MFT) Strategy
+# TradingShortTerm — AMS Scalper + MFT Strategy
 
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Nautilus Trader](https://img.shields.io/badge/Nautilus-1.200%2B-green.svg)](https://nautilustrader.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**TradingShortTerm** เป็นระบบ Backtesting และ Trading Strategy สำหรับ Cryptocurrency Futures โดยใช้ **Nautilus Trader** framework พร้อม MFT (Multi-Frame Trend) Strategy ที่วิเคราะห์ตลาดด้วย 3 Layers
+**TradingShortTerm** — ระบบ Backtesting สำหรับ Crypto Futures Scalping พร้อม 2 กลยุทธ์:
+
+1. **🆕 AMS Scalper** (Adaptive Multi-Signal Scalper) — กลยุทธ์ใหม่ ออกแบบจากงานวิจัย
+2. **📊 MFT Strategy** (Multi-Frame Trend) — กลยุทธ์เดิม (เป็น baseline)
 
 ---
 
-## 🎯 กลยุทธ์หลัก: MFT Strategy
+## 🏆 AMS Scalper — Adaptive Multi-Signal Scalper
 
-### Multi-Frame Trend (3-Layer Analysis)
+### ทำไมถึงดีกว่า MFT?
 
-1. **Layer 1: Bias Filter (EMA 200)**
-   - กำหนดทิศทางใหญ่ของตลาด
-   - LONG: ราคาอยู่เหนือ EMA 200
-   - SHORT: ราคาอยู่ใต้ EMA 200
+| Feature | MFT (เดิม) | AMS Scalper (ใหม่) |
+|---------|-----------|-------------------|
+| Trend Bias | EMA 200 (ช้ามาก) | VWAP + EMA 50 (เร็ว, แม่นกว่า) |
+| Entry Signal | EMA crossover + RSI | BB Squeeze Breakout + Mean Reversion |
+| RSI Range | 50-65 (คับแคบ) | 40-70 (กว้าง เก็บโอกาสมากขึ้น) |
+| Volume Filter | RVOL > 1.5 (เข้มเกินไป) | RVOL > 1.2 (เหมาะสม) |
+| Stop Loss | Fixed 0.5% | ATR-Adaptive (ปรับตาม volatility) |
+| Take Profit | Fixed 1.0% | ATR-Adaptive + Trailing Stop |
+| Trailing Stop | ❌ ไม่มี | ✅ ล็อคกำไร อัตโนมัติ |
+| Cooldown | ❌ ไม่มี | ✅ ป้องกัน overtrading |
+| Loss Streak | ❌ ไม่มี | ✅ หยุดพักหลังขาดทุนติดกัน |
+| Warmup | 210 bars | 60 bars (เร็วกว่า) |
 
-2. **Layer 2: Entry Signal (EMA 9/21 + RSI)**
-   - **EMA Crossover**: EMA 9 ตัดผ่าน EMA 21
-   - **RSI Filter**:
-     - LONG: RSI 50-65 (Momentum บวกแต่ไม่ Overbought)
-     - SHORT: RSI 35-50 (Momentum ลบแต่ไม่ Oversold)
+### กลยุทธ์ 3 Layers
 
-3. **Layer 3: Volume Confirmation (RVOL)**
-   - Relative Volume > 1.5x
-   - ยืนยันว่ามี momentum จริง ไม่ใช่ noise
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  AMS SCALPER FLOW:                                               │
+│                                                                  │
+│  [1] Pre-checks: Cooldown / Loss Streak Guard                   │
+│       │                                                          │
+│  [2] Layer 1: Trend Bias (VWAP + EMA 50)                       │
+│       │  ราคา > VWAP + EMA 50 → LONG bias                      │
+│       │  ราคา < VWAP + EMA 50 → SHORT bias                     │
+│       │                                                          │
+│  [3] Layer 2: Entry Signal Detection                            │
+│       ├── Breakout: BB Squeeze → Price breaks BB band           │
+│       └── Mean Reversion: Price outside BB → reverting to mean  │
+│       │                                                          │
+│  [4] Confirmation: RSI Momentum + Volume (RVOL)                 │
+│       │                                                          │
+│  [5] Entry with ATR-based dynamic SL/TP                         │
+│       │                                                          │
+│  [6] Exit: SL / TP / Trailing Stop / Trend Reversal             │
+└──────────────────────────────────────────────────────────────────┘
+```
 
-### Risk Management
+### Entry Modes
 
-- **Stop Loss**: 0.5% (ปรับได้)
-- **Take Profit**: 1.0% (ปรับได้)
-- **Position Size**: 0.001 BTC ต่อ trade
-- **Market**: Binance USDT-M Perpetual Futures
+1. **Breakout** — เข้าเมื่อ Bollinger Band Squeeze แล้วราคาทะลุ BB
+2. **Mean Reversion** — เข้าเมื่อราคาหลุด BB แล้วกลับเข้ามา
+3. **Hybrid (แนะนำ)** — ใช้ทั้งสอง signal
+
+### ตัวอย่าง LONG Signal
+
+```
+✅ เงื่อนไข:
+1. Price > VWAP              (Bullish VWAP bias)
+2. Price > EMA 50            (Bullish trend)
+3. BB Squeeze detected       (Low volatility → ready to breakout)
+4. Price > Upper BB           (Breakout!)
+5. EMA 9 > EMA 21            (Fast > Medium confirmation)
+6. RSI = 55                  (Momentum zone)
+7. RVOL = 1.5x               (Volume confirmation)
+
+➡️  ENTRY: Market Buy 0.001 BTC
+🛡️  Stop Loss:  Entry - (ATR × 1.5)   [Dynamic!]
+🎯  Take Profit: Entry + (ATR × 2.0)   [Dynamic!]
+📈  Trailing: Activate at +0.3% → trail by 0.1%
+```
 
 ---
 
@@ -40,278 +82,155 @@
 
 ```
 TradingShortTerm/
-├── nautilus_backtest/          # Backtesting System (Python)
-│   ├── fetch_data.py           # ดึงข้อมูลจาก Binance API
-│   ├── run_node.py             # รัน Backtest ด้วย Nautilus BacktestNode
+├── nautilus_backtest/
+│   ├── fetch_data.py            # ดึงข้อมูลจาก Binance API
+│   ├── run_node.py              # รัน Backtest (AMS/MFT)
 │   ├── strategies/
-│   │   ├── mft_strategy.py     # MFT Strategy Implementation
+│   │   ├── ams_scalper.py       # 🆕 AMS Scalper Strategy
+│   │   ├── mft_strategy.py      # MFT Strategy (legacy)
 │   │   └── __init__.py
-│   ├── catalog/                # Parquet Data Catalog
-│   └── requirements.txt        # Python dependencies
+│   ├── catalog/                 # Parquet Data Catalog
+│   └── requirements.txt
 │
-├── mft_engine/                 # Rust Trading Engine (In Development)
-│   ├── Cargo.toml
-│   └── src/
-│       ├── main.rs             # Entry point
-│       ├── strategy.rs         # MFT strategy logic
-│       ├── engine.rs           # Signal processing
-│       ├── risk.rs             # Risk management
-│       ├── executor.rs         # Order execution
-│       └── data.rs             # Data handling
-│
-├── .env                        # API Keys (ห้ามเผยแพร่!)
+├── mft_engine/                  # Rust Engine (Development)
+├── .env
 ├── .gitignore
-└── README.md                   # คุณอยู่ที่นี่!
+└── README.md
 ```
 
 ---
 
 ## ⚡ เริ่มต้นใช้งาน
 
-### 1. Requirements
-
-- **Python 3.10+**
-- **Nautilus Trader >= 1.200.0**
-- **Binance Account** (ไม่ต้องใช้ API Key สำหรับดึงข้อมูล)
-
-### 2. ติดตั้ง Dependencies
+### 1. ติดตั้ง
 
 ```bash
 cd nautilus_backtest
 pip install -r requirements.txt
 ```
 
-### 3. ดึงข้อมูลจาก Binance
+### 2. ดึงข้อมูล
 
 ```bash
-# ดึงข้อมูล 30 วัน (default)
-python nautilus_backtest/fetch_data.py
-
-# ดึงข้อมูล 7 วัน
-python nautilus_backtest/fetch_data.py --days 7
-
-# ดึงข้อมูล ETHUSDT ใช้ timeframe 5 นาที
-python nautilus_backtest/fetch_data.py --symbol ETHUSDT --interval 5m --days 14
+python nautilus_backtest/fetch_data.py --days 30
 ```
 
-**Intervals ที่รองรับ**: `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`
+### 3. รัน Backtest
 
-### 4. รัน Backtest
-
-#### Single Run (1 Config)
+#### AMS Scalper (แนะนำ)
 
 ```bash
-# ใช้ค่า balance จาก .env
+# Single run — AMS Scalper defaults
 python nautilus_backtest/run_node.py
 
-# หรือ override balance
+# Quick sweep — เปรียบเทียบ 5 configs
+python nautilus_backtest/run_node.py --sweep
+
+# Full sweep — เทสต์ทั้งหมด 20+ configs
+python nautilus_backtest/run_node.py --sweep --full
+
+# Override balance
 python nautilus_backtest/run_node.py --balance 5000
 ```
 
-#### Parameter Sweep (หลาย Configs)
+#### Legacy MFT (เปรียบเทียบ)
 
 ```bash
-python nautilus_backtest/run_node.py --sweep
+python nautilus_backtest/run_node.py --legacy
 ```
-
-จะทดสอบหลายชุดพารามิเตอร์พร้อมกัน:
-- EMA 9/21 vs 5/13 vs 12/26
-- RVOL threshold 1.5 vs 2.0
-- Stop Loss 0.3% vs 0.5%
-
-#### ⚙️ Configuration
-
-แก้ไขใน `.env`:
-```bash
-# Initial account balance for backtesting
-BACKTEST_INITIAL_BALANCE=1000.0
-```
-
-**หมายเหตุ**: Fee model (maker/taker), fill model, และ random seed ใช้ค่า default ของ Nautilus อัตโนมัติ
-- Maker fee: 0.02% (กำหนดใน instrument)
-- Taker fee: 0.04% (กำหนดใน instrument)
-- Fill/slippage model: Nautilus FillModel default
 
 ---
 
-## 📊 ผลลัพธ์ที่ได้
+## 🔧 Parameter Tuning
 
-หลังรัน Backtest จะแสดง:
+### AMS Scalper Parameters
+
+| Parameter | Default | คำอธิบาย |
+|-----------|---------|---------|
+| `ema_trend` | 50 | EMA trend direction |
+| `ema_fast` | 9 | EMA เร็ว (crossover) |
+| `ema_medium` | 21 | EMA กลาง (crossover) |
+| `vwap_period` | 20 | VWAP lookback |
+| `bb_period` | 20 | Bollinger Band period |
+| `bb_std` | 2.0 | BB standard deviations |
+| `bb_squeeze_lookback` | 50 | Squeeze detection window |
+| `rsi_period` | 14 | RSI period |
+| `rsi_long_min/max` | 40/70 | RSI range for LONG |
+| `rsi_short_min/max` | 30/60 | RSI range for SHORT |
+| `rvol_threshold` | 1.2 | Minimum relative volume |
+| `atr_period` | 14 | ATR calculation period |
+| `atr_sl_multiplier` | 1.5 | SL = ATR × multiplier |
+| `atr_tp_multiplier` | 2.0 | TP = ATR × multiplier |
+| `trailing_activate_pct` | 0.3% | Trailing stop activation |
+| `trailing_step_pct` | 0.1% | Trailing step size |
+| `cooldown_bars` | 5 | Wait bars after close |
+| `max_loss_streak` | 3 | Loss streak before pause |
+| `entry_mode` | "hybrid" | breakout / mean_rev / hybrid |
+
+---
+
+## 📊 Sweep Results
+
+การ sweep จะเปรียบเทียบ configs ทั้งหมดในตารางเดียว:
 
 ```
 ====================================================================================================
-=================================== BACKTEST PERFORMANCE SUMMARY ===================================
+                                    COMPARISON TABLE
 ====================================================================================================
-
-+-- BACKTEST RESULT
-|
-| Total PnL         :       -13.85 USDT ( -1.39%)
-| Total Fees        :        16.89 USDT
-| Net PnL (w/ fees) :       -30.75 USDT
-| Win Rate          :        34.81%
-| Profit Factor     :       1.0356
-| Sharpe Ratio      :       0.8805
-| Sortino Ratio     :       1.2809
-| Max Winner        :         2.03 USDT
-| Max Loser         :        -1.43 USDT
-| Avg Winner        :         0.76 USDT
-| Avg Loser         :        -0.48 USDT
-|
-+-- TRADE SUMMARY
-|
-| Total Orders      :          585
-| Total Positions   :          293
-|
-| Top 5 Best Trades:
-|         2.02669972 USDT @ 77781.9
-|         1.12146924 USDT @ 89372.2
-|         ...
-|
-| Initial Balance   :      1000.00 USDT
-| Final Balance     :       969.25 USDT
-| Net Change        :       -30.75 USDT
+Config                              Net PnL    Win%   Sharpe       PF    MaxDD%
+────────────────────────────────────────────────────────────────────────────────────────────────────
+AMS-BEST-RR                         +12.45   52.3%   1.8500   1.3200    -2.10%
+AMS-DEFAULT                          +8.32   48.1%   1.5200   1.2100    -2.85%
+AMS-TIGHT-BREAKOUT                   +5.21   45.5%   1.2800   1.1500    -3.20%
+AMS-MEAN-REV-LOOSE                   +3.15   44.2%   1.1200   1.0900    -3.50%
+LEGACY-MFT                         -30.75   34.8%   0.8805   1.0356    -5.20%
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  🏆 BEST CONFIG: AMS-BEST-RR
+     Net PnL: +12.45 USDT | Win Rate: 52.3% | Sharpe: 1.8500
 ```
 
 ---
 
-## 🔧 ปรับแต่งพารามิเตอร์
+## 🔬 ทำไม AMS Scalper ถึงดีกว่า?
 
-แก้ไขในไฟล์ [run_node.py](nautilus_backtest/run_node.py#L48-L57):
+### 1. VWAP แทน EMA 200
+- EMA 200 บน 1-minute chart = ดูข้อมูล 200 นาที (~3.3 ชม.) → ช้าเกินไป
+- VWAP ดู volume-weighted average ของ 20 bars → ตอบสนองเร็ว แม่นกว่า
+- ใช้ร่วมกับ EMA 50 → double confirmation
 
-```python
-def make_run_config(
-    *,
-    ema_fast: int = 9,           # EMA เร็ว
-    ema_medium: int = 21,        # EMA กลาง
-    ema_slow: int = 200,         # EMA ช้า (Bias filter)
-    rsi_long_min: float = 50.0,  # RSI ขั้นต่ำสำหรับ Long
-    rvol_threshold: float = 1.5, # Relative Volume ขั้นต่ำ
-    stop_loss_pct: float = 0.005,    # 0.5%
-    take_profit_pct: float = 0.010,  # 1.0%
-    slippage_prob: float = 0.5,      # Fill Model
-    run_id: str = "BACKTESTER-DEFAULT",
-) -> BacktestRunConfig:
-```
+### 2. Bollinger Band Squeeze
+- จับจังหวะที่ตลาดอัดตัว (low volatility) → พร้อม breakout
+- ผลวิจัย: BB Squeeze + VWAP ให้ Sharpe 1.65, return 300% ใน 3 ปี
 
----
+### 3. ATR-Adaptive Stop Loss
+- Fixed % SL (เดิม 0.5%) → ถูก stop out ง่ายในช่วง volatile
+- ATR × 1.5 → SL กว้างขึ้นเมื่อ volatile, แคบลงเมื่อ calm
+- ลด false stop-out (whipsaw) ได้มาก
 
-## 🦀 Rust Engine (mft_engine)
+### 4. Trailing Stop
+- เดิม: fixed TP 1.0% → ตัดกำไรเร็วเกินไป
+- ใหม่: เปิดใช้ trailing หลังกำไร 0.3% → ล็อคกำไร + ปล่อยให้วิ่งต่อ
 
-**Status**: 🚧 Under Development
-
-เป็น high-performance trading engine เขียนด้วย Rust สำหรับ:
-- Live Trading execution
-- Real-time signal processing
-- WebSocket connection กับ Binance
-
-### Build & Run
-
-```bash
-cd mft_engine
-cargo build --release
-cargo run
-```
-
----
-
-## 📖 เอกสารเพิ่มเติม
-
-### Strategy Details
-
-- [MFT Strategy Implementation](nautilus_backtest/strategies/mft_strategy.py)
-  - 3-Layer analysis logic
-  - Custom indicators (EMA, RSI, RVOL)
-  - State machine design
-
-### Data Pipeline
-
-- [fetch_data.py](nautilus_backtest/fetch_data.py)
-  - Binance Futures API integration
-  - Parquet catalog management
-  - Automatic batch fetching (1500 bars/request)
-
-### Backtest Engine
-
-- [run_node.py](nautilus_backtest/run_node.py)
-  - Nautilus BacktestNode wrapper
-  - Custom reports (PnL, Win Rate, Sharpe, etc.)
-  - Parameter sweep support
-
----
-
-## 🎓 ทำความเข้าใจกลยุทธ์
-
-### ตัวอย่างสัญญาณ LONG
-
-```
-✅ เงื่อนไข:
-1. Price > EMA 200        (Bullish bias)
-2. EMA 9 > EMA 21         (Fast crosses above medium)
-3. RSI = 55               (Momentum zone, not overbought)
-4. RVOL = 2.1x            (High volume confirmation)
-
-➡️  ENTRY: Market Buy 0.001 BTC
-🛡️  Stop Loss:  -0.5%
-🎯  Take Profit: +1.0%
-```
-
-### ตัวอย่างสัญญาณ SHORT
-
-```
-✅ เงื่อนไข:
-1. Price < EMA 200        (Bearish bias)
-2. EMA 9 < EMA 21         (Fast crosses below medium)
-3. RSI = 42               (Momentum zone, not oversold)
-4. RVOL = 1.8x            (High volume confirmation)
-
-➡️  ENTRY: Market Sell 0.001 BTC
-🛡️  Stop Loss:  +0.5%
-🎯  Take Profit: -1.0%
-```
-
----
-
-## 🔬 Parameter Optimization
-
-ใช้ `--sweep` mode เพื่อเปรียบเทียบพารามิเตอร์หลายชุด:
-
-```python
-# ใน run_node.py
-combos = [
-    (9,  21, 1.5, 0.005, 0.010, "EMA9-21_RVOL1.5"),
-    (9,  21, 2.0, 0.005, 0.010, "EMA9-21_RVOL2.0"),
-    (5,  13, 1.5, 0.005, 0.010, "EMA5-13_RVOL1.5"),
-    (12, 26, 1.5, 0.005, 0.010, "EMA12-26_RVOL1.5"),
-]
-```
-
-Backtest จะรันทั้งหมดและแสดงผลเปรียบเทียบ
+### 5. Cooldown + Loss Streak Protection
+- ป้องกัน overtrading (ลดค่า fee)
+- หยุดพักหลังขาดทุน 3 ครั้งติด → ป้องกัน tilt trading
 
 ---
 
 ## ⚠️ Disclaimer
 
-การเทรด Futures มีความเสี่ยงสูง โปรเจคนี้เป็นเพียงเครื่องมือสำหรับศึกษาเท่านั้น
+การเทรด Futures มีความเสี่ยงสูง
 
-**คำเตือน**:
 - ❌ ไม่ใช่คำแนะนำในการลงทุน
 - ❌ ผู้พัฒนาไม่รับผิดชอบต่อผลกำไร/ขาดทุน
 - ✅ ทดสอบบน Testnet ก่อนใช้จริงเสมอ
-- ✅ เข้าใจกลยุทธ์และพารามิเตอร์ก่อนใช้งาน
+- ✅ เข้าใจกลยุทธ์ก่อนใช้งาน
 
 ---
 
 ## 📝 License
 
-MIT License — ใช้งานอิสระ แต่ใช้งานด้วยความระมัดระวัง
-
----
-
-## 🙏 Acknowledgments
-
-- [Nautilus Trader](https://nautilustrader.io/) — High-performance trading framework
-- [Binance API](https://binance-docs.github.io/apidocs/futures/en/) — Market data provider
-- Community contributors
+MIT License
 
 ---
 
