@@ -4,7 +4,9 @@
       "Bash(python run_node.py)",
       "Bash(python nautilus_backtest/run_node.py)",
       "Bash(python -c \"from nautilus_trader.backtest.engine import BacktestEngine; from nautilus_trader.backtest.results import BacktestResult; import inspect; print(''BacktestResult attributes:''); print([attr for attr in dir(BacktestResult) if not attr.startswith(''_'')])\")",
-      "Bash(python -c \"from nautilus_trader.backtest.results import BacktestResult; help(BacktestResult)\")"
+      "Bash(python -c \"from nautilus_trader.backtest.results import BacktestResult; help(BacktestResult)\")",
+      "Bash(python -c \"from nautilus_trader.backtest.models.fee import MakerTakerFeeModel; from nautilus_trader.backtest.config import MakerTakerFeeModelConfig; help(MakerTakerFeeModelConfig)\")",
+      "Bash(python -c \"from nautilus_trader.model.instruments import CryptoPerpetual; help(CryptoPerpetual)\")"
     ],
     "deny": [],
     "ask": []

@@ -1,7 +1,7 @@
 """
 run_node.py — Nautilus Trader BacktestNode (High-Level API)
 ===========================================================
-ใช้ Nautilus default reports 100% — ไม่มีการคำนวณเองเลย
+ใช้ Nautilus default environment 100% — ไม่ต้อง config เอง
 
 Reports ที่แสดง (ผ่าน Nautilus API โดยตรง):
   [1] BacktestResult  — engine.get_result()
@@ -12,13 +12,16 @@ Reports ที่แสดง (ผ่าน Nautilus API โดยตรง):
   [6] Account         — engine.trader.generate_account_report(venue)
 
 วิธีใช้:
-    python run_node.py           # single run
+    python run_node.py           # single run (uses .env BACKTEST_INITIAL_BALANCE)
     python run_node.py --sweep   # parameter sweep
+    python run_node.py --balance 5000  # override balance
 """
 
+import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
 from nautilus_trader.backtest.node import BacktestNode
 from nautilus_trader.config import (
     BacktestDataConfig,
@@ -26,8 +29,6 @@ from nautilus_trader.config import (
     BacktestRunConfig,
     BacktestVenueConfig,
     ImportableStrategyConfig,
-    ImportableFeeModelConfig,
-    ImportableFillModelConfig,
     LoggingConfig,
 )
 from nautilus_trader.model.data import Bar
@@ -35,11 +36,23 @@ from nautilus_trader.model.enums import AccountType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
+# Load .env file
+load_dotenv(Path(__file__).parent.parent / ".env")
+
 CATALOG_PATH      = Path(__file__).parent / "catalog"
 VENUE_NAME        = "BINANCE"
 SYMBOL            = "BTCUSDT-PERP"
 INSTRUMENT_ID_STR = f"{SYMBOL}.{VENUE_NAME}"
 SWEEP_MODE        = "--sweep" in sys.argv
+
+# Get initial balance from .env or default
+DEFAULT_BALANCE = float(os.getenv("BACKTEST_INITIAL_BALANCE", "1000.0"))
+
+# Check for --balance override
+if "--balance" in sys.argv:
+    idx = sys.argv.index("--balance")
+    if idx + 1 < len(sys.argv):
+        DEFAULT_BALANCE = float(sys.argv[idx + 1])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -47,6 +60,7 @@ SWEEP_MODE        = "--sweep" in sys.argv
 # ─────────────────────────────────────────────────────────────────────────────
 def make_run_config(
     *,
+    # Strategy parameters
     ema_fast: int = 9,
     ema_medium: int = 21,
     ema_slow: int = 200,
@@ -54,9 +68,19 @@ def make_run_config(
     rvol_threshold: float = 1.5,
     stop_loss_pct: float = 0.005,
     take_profit_pct: float = 0.010,
-    slippage_prob: float = 0.5,
+    # Account (from .env or CLI)
+    initial_balance: float = DEFAULT_BALANCE,
     run_id: str = "BACKTESTER-DEFAULT",
 ) -> BacktestRunConfig:
+    """
+    สร้าง BacktestRunConfig โดยใช้ Nautilus defaults ทั้งหมด:
+
+    ✅ Fee Model    → ใช้ค่าจาก Instrument (maker/taker fee ที่กำหนดใน fetch_data.py)
+    ✅ Fill Model   → ใช้ FillModel default (Nautilus จัดการ slippage/partial fills)
+    ✅ Random Seed  → ปล่อยให้ Nautilus กำหนด (truly random)
+
+    ที่ configurable: initial_balance เท่านั้น (ผ่าน .env หรือ CLI)
+    """
     bar_type_str = f"{INSTRUMENT_ID_STR}-1-MINUTE-LAST-EXTERNAL"
 
     return BacktestRunConfig(
@@ -69,21 +93,11 @@ def make_run_config(
                 oms_type=OmsType.NETTING,
                 account_type=AccountType.MARGIN,
                 base_currency="USDT",
-                starting_balances=["1000 USDT"],
-                fee_model=ImportableFeeModelConfig(
-                    fee_model_path="nautilus_trader.backtest.models.fee:MakerTakerFeeModel",
-                    config_path="nautilus_trader.backtest.config:MakerTakerFeeModelConfig",
-                    config={},
-                ),
-                fill_model=ImportableFillModelConfig(
-                    fill_model_path="nautilus_trader.backtest.models.fill:FillModel",
-                    config_path="nautilus_trader.backtest.config:FillModelConfig",
-                    config={
-                        "prob_fill_on_limit": 0.2,
-                        "prob_slippage": slippage_prob,
-                        "random_seed": 42,
-                    },
-                ),
+                starting_balances=[f"{initial_balance} USDT"],
+
+                # ✅ ใช้ Nautilus defaults — ไม่ต้อง config
+                # Fee จะดึงจาก Instrument (CryptoPerpetual.maker_fee, .taker_fee)
+                # ที่กำหนดไว้ใน fetch_data.py:95-96 แล้ว
             )
         ],
 
@@ -128,6 +142,7 @@ def make_run_config(
 
 
 def make_sweep_configs() -> list[BacktestRunConfig]:
+    """Parameter sweep — ทดสอบหลายชุดพารามิเตอร์พร้อมกัน"""
     combos = [
         (9,  21, 1.5, 0.005, 0.010, "EMA9-21_RVOL1.5"),
         (9,  21, 2.0, 0.005, 0.010, "EMA9-21_RVOL2.0"),
@@ -292,6 +307,7 @@ def run():
     print("=" * W)
     print(f"  Catalog    : {CATALOG_PATH.resolve()}")
     print(f"  Instrument : {instruments[0].id}")
+    print(f"  Balance    : {DEFAULT_BALANCE:,.2f} USDT (from .env)")
 
     configs = make_sweep_configs() if SWEEP_MODE else [make_run_config(run_id="BACKTESTER-SINGLE")]
     print(f"  Configs    : {len(configs)}")

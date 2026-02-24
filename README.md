@@ -101,7 +101,11 @@ python nautilus_backtest/fetch_data.py --symbol ETHUSDT --interval 5m --days 14
 #### Single Run (1 Config)
 
 ```bash
+# ใช้ค่า balance จาก .env
 python nautilus_backtest/run_node.py
+
+# หรือ override balance
+python nautilus_backtest/run_node.py --balance 5000
 ```
 
 #### Parameter Sweep (หลาย Configs)
@@ -114,6 +118,19 @@ python nautilus_backtest/run_node.py --sweep
 - EMA 9/21 vs 5/13 vs 12/26
 - RVOL threshold 1.5 vs 2.0
 - Stop Loss 0.3% vs 0.5%
+
+#### ⚙️ Configuration
+
+แก้ไขใน `.env`:
+```bash
+# Initial account balance for backtesting
+BACKTEST_INITIAL_BALANCE=1000.0
+```
+
+**หมายเหตุ**: Fee model (maker/taker), fill model, และ random seed ใช้ค่า default ของ Nautilus อัตโนมัติ
+- Maker fee: 0.02% (กำหนดใน instrument)
+- Taker fee: 0.04% (กำหนดใน instrument)
+- Fill/slippage model: Nautilus FillModel default
 
 ---
 
