@@ -1,6 +1,0 @@
-[workspace]
-members = [
-    "rust_backtest",
-    "mft_engine",
-]
-resolver = "2"

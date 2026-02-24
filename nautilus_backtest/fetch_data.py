@@ -16,6 +16,7 @@ Intervals ที่รองรับ: 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 1d
 
 import sys
 import time
+import shutil
 import argparse
 from pathlib import Path
 from decimal import Decimal
@@ -54,6 +55,7 @@ def parse_args():
     parser.add_argument("--symbol",   default="BTCUSDT",  help="Trading pair (e.g. BTCUSDT, ETHUSDT)")
     parser.add_argument("--days",     type=int, default=30, help="Days of historical data to fetch")
     parser.add_argument("--interval", default="1m",        help="Bar interval: 1m, 5m, 15m, 1h ...")
+    parser.add_argument("--force",    action="store_true", help="ลบข้อมูล Bar เก่าใน catalog ก่อน write ใหม่ (แก้ Intervals not disjoint)")
     return parser.parse_args()
 
 
@@ -215,8 +217,15 @@ def fetch(symbol: str = "BTCUSDT", days: int = 30, interval: str = "1m"):
     now_ms      = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
     start_ms    = now_ms - (days * 24 * 60 * 60 * 1000)
 
-    # [1] Catalog
+    # [1] Catalog — ลบข้อมูล Bar เก่าออกก่อน (ป้องกัน disjoint interval error)
     CATALOG_PATH.mkdir(parents=True, exist_ok=True)
+
+    bar_data_dir = CATALOG_PATH / "data" / "bar"
+    if bar_data_dir.exists():
+        print(f"\n[!] ลบข้อมูล Bar เก่าใน catalog...")
+        shutil.rmtree(bar_data_dir)
+        print(f"    Done.")
+
     catalog = ParquetDataCatalog(str(CATALOG_PATH))
 
     # [2] Instrument
