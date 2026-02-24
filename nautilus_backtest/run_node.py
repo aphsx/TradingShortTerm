@@ -37,7 +37,8 @@ INSTRUMENT_ID_STR = f"{SYMBOL}.{VENUE_NAME}"
 SWEEP_MODE        = "--sweep" in sys.argv
 FULL_SWEEP        = "--full" in sys.argv
 
-DEFAULT_BALANCE = float(os.getenv("BACKTEST_INITIAL_BALANCE", "10000.0"))
+DEFAULT_BALANCE = float(os.getenv("BACKTEST_INITIAL_BALANCE"))
+# DEFAULT_BALANCE = float(os.getenv("BACKTEST_INITIAL_BALANCE", "1000.0"))
 if "--balance" in sys.argv:
     idx = sys.argv.index("--balance")
     if idx + 1 < len(sys.argv):
