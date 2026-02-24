@@ -139,7 +139,7 @@ def make_config(
                     },
                 )
             ],
-            logging=LoggingConfig(log_level="WARNING"),
+            logging=LoggingConfig(log_level="INFO"),
         ),
     )
 
@@ -225,74 +225,60 @@ def make_full_sweep() -> list[BacktestRunConfig]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Reports
 # ─────────────────────────────────────────────────────────────────────────────
-def print_reports(node: BacktestNode, results: list) -> None:
-    """แสดง Nautilus native output ตรงๆ — stats dicts + full DataFrames"""
+REPORTS_DIR = Path(__file__).parent / "reports"
+
+def save_reports(node: BacktestNode, results: list) -> None:
+    """บันทึก orders/positions/account/stats ลงไฟล์ใน reports/ (ไม่แสดง terminal)"""
+    import json
     import pandas as pd
+    from datetime import datetime, timezone
 
     if not results:
-        print("\n[WARN] No results.")
         return
 
-    pd.set_option("display.max_columns", None)
-    pd.set_option("display.max_rows", None)
-    pd.set_option("display.width", 200)
-    pd.set_option("display.float_format", "{:.6f}".format)
-
+    REPORTS_DIR.mkdir(exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     engines = node.get_engines()
 
     for i, result in enumerate(results):
-        W = 120
-        run_id = result.run_config_id if result.run_config_id else f"Run #{i+1}"
-        print("\n" + "=" * W)
-        print(f"  RUN : {run_id}".center(W))
-        print("=" * W)
+        run_id = (result.run_config_id or f"run_{i+1}")[:20]
+        prefix = REPORTS_DIR / f"{ts}_{run_id}"
 
-        # ── 1. PnL Statistics (Nautilus native dict) ──────────────────────────
+        # ── 1. stats_pnls + stats_returns → JSON ──────────────────────────────
+        stats_out: dict = {}
         if result.stats_pnls:
-            print("\n[Nautilus] stats_pnls:")
-            for currency, stats in result.stats_pnls.items():
-                print(f"  Currency: {currency}")
-                for k, v in stats.items():
-                    print(f"    {k:<45}: {v}")
-
-        # ── 2. Returns Statistics (Nautilus native dict) ──────────────────────
+            stats_out["stats_pnls"] = result.stats_pnls
         if result.stats_returns:
-            print("\n[Nautilus] stats_returns:")
-            for k, v in result.stats_returns.items():
-                print(f"  {k:<45}: {v}")
+            stats_out["stats_returns"] = result.stats_returns
+        if result.backtest_start and result.backtest_end:
+            stats_out["backtest_start_ns"] = result.backtest_start
+            stats_out["backtest_end_ns"]   = result.backtest_end
 
-        # ── 3. Orders Report (Nautilus DataFrame) ─────────────────────────────
+        stats_file = Path(f"{prefix}_stats.json")
+        with open(stats_file, "w", encoding="utf-8") as f:
+            json.dump(stats_out, f, indent=2, default=str)
+
+        # ── 2. orders / positions / account → CSV ─────────────────────────────
         try:
             engine = engines[i] if i < len(engines) else engines[0]
 
             orders_df = engine.trader.generate_orders_report()
-            print(f"\n[Nautilus] generate_orders_report()  ({len(orders_df) if orders_df is not None else 0} rows):")
             if orders_df is not None and len(orders_df) > 0:
-                print(orders_df.to_string())
-            else:
-                print("  (no orders)")
+                orders_df.to_csv(f"{prefix}_orders.csv", index=True)
 
-            # ── 4. Positions Report (Nautilus DataFrame) ──────────────────────
             positions_df = engine.trader.generate_positions_report()
-            print(f"\n[Nautilus] generate_positions_report()  ({len(positions_df) if positions_df is not None else 0} rows):")
             if positions_df is not None and len(positions_df) > 0:
-                print(positions_df.to_string())
-            else:
-                print("  (no positions)")
+                positions_df.to_csv(f"{prefix}_positions.csv", index=True)
 
-            # ── 5. Account Report (Nautilus DataFrame) ────────────────────────
             venue = Venue(VENUE_NAME)
             account_df = engine.trader.generate_account_report(venue)
-            print(f"\n[Nautilus] generate_account_report('{VENUE_NAME}')  ({len(account_df) if account_df is not None else 0} rows):")
             if account_df is not None and len(account_df) > 0:
-                print(account_df.to_string())
-            else:
-                print("  (no account data)")
+                account_df.to_csv(f"{prefix}_account.csv", index=True)
 
         except Exception as e:
-            print(f"  (Engine report error: {e})")
+            print(f"[WARN] save_reports error: {e}")
 
-        print("\n" + "=" * W)
+        print(f"\n  [Saved] reports/{ts}_{run_id}_*.csv / _stats.json")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -328,7 +314,7 @@ def run():
 
     node = BacktestNode(configs=configs)
     results = node.run()
-    print_reports(node, results)
+    save_reports(node, results)
 
 
 if __name__ == "__main__":

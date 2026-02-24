@@ -56,3 +56,5 @@ Cargo.lock
 **/*.rs.bk
 debug/
 release/
+catalog/data/
+reports/
