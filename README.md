@@ -1,94 +1,301 @@
-# VORTEX-7: Advanced Binance Futures Scalping Bot 🚀
+# TradingShortTerm — Multi-Frame Trend (MFT) Strategy
 
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Nautilus Trader](https://img.shields.io/badge/Nautilus-1.200%2B-green.svg)](https://nautilustrader.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Trading](https://img.shields.io/badge/Market-Binance%20Futures-orange)](https://www.binance.com/)
 
-**VORTEX-7** is a high-frequency, low-latency trading engine designed for **Binance USDT-M Futures**. It utilizes a multi-engine architecture to analyze order flow, tick momentum, technical indicators, and market sentiment in real-time.
-
----
-
-## 🌟 Key Features | คุณสมบัติหลัก
-
-- **Multi-Engine Analysis**: 5 specialized engines (Order Flow, Tick, Technical, Sentiment, Regime) working in parallel.
-- **Ultra-Low Latency**: Built with `ccxt.pro` for async WebSocket connections, achieving sub-10ms pipeline processing.
-- **Smart Risk Management**: Dynamic position sizing, ATR-based stop-loss/take-profit, and fee-aware strategy filtering.
-- **Regime-Adaptive**: Automatically adjusts weights and strategies based on market volatility (Low, Normal, High, Extreme).
-- **Comprehensive Logging**: Granular trade tracking via `orders.log` and **Supabase** for performance analytics.
+**TradingShortTerm** เป็นระบบ Backtesting และ Trading Strategy สำหรับ Cryptocurrency Futures โดยใช้ **Nautilus Trader** framework พร้อม MFT (Multi-Frame Trend) Strategy ที่วิเคราะห์ตลาดด้วย 3 Layers
 
 ---
 
-## 🏗 System Architecture | สถาปัตยกรรมระบบ
+## 🎯 กลยุทธ์หลัก: MFT Strategy
 
-The system is divided into modular components for maximum reliability:
+### Multi-Frame Trend (3-Layer Analysis)
 
-1.  **Data Hub (`DataStorage`)**: Uses Redis for high-speed state management and kline caching.
-2.  **Analysis Engines (`engines.py`)**:
-    - **E1 Order Flow**: Real-time Orderbook imbalance & Micro-price.
-    - **E2 Tick Momentum**: Trade velocity & Aggressor ratios.
-    - **E3 Technicals**: RSI, Bollinger Bands, and ATR.
-    - **E4 Sentiment**: L/S Ratios, Funding Rates, and Top Trader positioning.
-    - **E5 Regime**: Volatility-based filters and dynamic weight overrides.
-3.  **Core Logic (`core.py`)**:
-    - **Decision Engine**: Combines engine signals into a weighted final score.
-    - **Risk Manager**: Calculates leverage (10x-30x), position size, and SL/TP distances.
-    - **Executor**: Manages order placement via CCXT with automatic retries and error handling.
+1. **Layer 1: Bias Filter (EMA 200)**
+   - กำหนดทิศทางใหญ่ของตลาด
+   - LONG: ราคาอยู่เหนือ EMA 200
+   - SHORT: ราคาอยู่ใต้ EMA 200
+
+2. **Layer 2: Entry Signal (EMA 9/21 + RSI)**
+   - **EMA Crossover**: EMA 9 ตัดผ่าน EMA 21
+   - **RSI Filter**:
+     - LONG: RSI 50-65 (Momentum บวกแต่ไม่ Overbought)
+     - SHORT: RSI 35-50 (Momentum ลบแต่ไม่ Oversold)
+
+3. **Layer 3: Volume Confirmation (RVOL)**
+   - Relative Volume > 1.5x
+   - ยืนยันว่ามี momentum จริง ไม่ใช่ noise
+
+### Risk Management
+
+- **Stop Loss**: 0.5% (ปรับได้)
+- **Take Profit**: 1.0% (ปรับได้)
+- **Position Size**: 0.001 BTC ต่อ trade
+- **Market**: Binance USDT-M Perpetual Futures
 
 ---
 
-## ⚡ Quick Start | เริ่มต้นใช้งาน
+## 📂 โครงสร้างโปรเจค
+
+```
+TradingShortTerm/
+├── nautilus_backtest/          # Backtesting System (Python)
+│   ├── fetch_data.py           # ดึงข้อมูลจาก Binance API
+│   ├── run_node.py             # รัน Backtest ด้วย Nautilus BacktestNode
+│   ├── strategies/
+│   │   ├── mft_strategy.py     # MFT Strategy Implementation
+│   │   └── __init__.py
+│   ├── catalog/                # Parquet Data Catalog
+│   └── requirements.txt        # Python dependencies
+│
+├── mft_engine/                 # Rust Trading Engine (In Development)
+│   ├── Cargo.toml
+│   └── src/
+│       ├── main.rs             # Entry point
+│       ├── strategy.rs         # MFT strategy logic
+│       ├── engine.rs           # Signal processing
+│       ├── risk.rs             # Risk management
+│       ├── executor.rs         # Order execution
+│       └── data.rs             # Data handling
+│
+├── .env                        # API Keys (ห้ามเผยแพร่!)
+├── .gitignore
+└── README.md                   # คุณอยู่ที่นี่!
+```
+
+---
+
+## ⚡ เริ่มต้นใช้งาน
 
 ### 1. Requirements
-- Python 3.10+
-- Redis Server (local or managed)
-- Supabase Account (SQL Logging)
-- Binance API Keys (with Futures enabled)
 
-### 2. Setup
+- **Python 3.10+**
+- **Nautilus Trader >= 1.200.0**
+- **Binance Account** (ไม่ต้องใช้ API Key สำหรับดึงข้อมูล)
+
+### 2. ติดตั้ง Dependencies
+
 ```bash
-git clone https://github.com/aphsx/TradingShortTerm.git
-cd TradingShortTerm
+cd nautilus_backtest
 pip install -r requirements.txt
 ```
 
-### 3. Configuration
-Rename `.env.example` to `.env` and fill in your credentials:
-```env
-BINANCE_API_KEY=your_apiKey
-BINANCE_API_SECRET=your_secret
-SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_anon_key
-TRADING_PAIRS=BTCUSDT,ETHUSDT,SOLUSDT
+### 3. ดึงข้อมูลจาก Binance
+
+```bash
+# ดึงข้อมูล 30 วัน (default)
+python nautilus_backtest/fetch_data.py
+
+# ดึงข้อมูล 7 วัน
+python nautilus_backtest/fetch_data.py --days 7
+
+# ดึงข้อมูล ETHUSDT ใช้ timeframe 5 นาที
+python nautilus_backtest/fetch_data.py --symbol ETHUSDT --interval 5m --days 14
 ```
 
-### 4. Run the Bot
+**Intervals ที่รองรับ**: `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`
+
+### 4. รัน Backtest
+
+#### Single Run (1 Config)
+
 ```bash
-python main.py
+python nautilus_backtest/run_node.py
 ```
 
-### 5. Rust Backtester 🦀
-For high-performance backtesting using the **Nautilus Trader Rust SDK**, use the `rust_backtest` module:
+#### Parameter Sweep (หลาย Configs)
+
 ```bash
-cd rust_backtest
-cargo run
+python nautilus_backtest/run_node.py --sweep
 ```
-This will automatically:
-- Download historical `aggTrades` from Binance.
-- Cache them as **Parquet** files for ultra-fast loading.
-- Run a simulation using the Nautilus event-driven engine.
+
+จะทดสอบหลายชุดพารามิเตอร์พร้อมกัน:
+- EMA 9/21 vs 5/13 vs 12/26
+- RVOL threshold 1.5 vs 2.0
+- Stop Loss 0.3% vs 0.5%
 
 ---
 
-## 📄 Documentation | เอกสารประกอบ
+## 📊 ผลลัพธ์ที่ได้
 
-For a deep dive into the mathematical formulas, engine logic, and detailed strategy descriptions, please refer to:
-- [**Detailed Technical Documentation**](./TECHNICAL_DOCUMENTATION.md) — สำหรับรายละเอียดเชิงลึกของระบบ
-- [**Original Blueprint**](./ORIGINAL_README_BLUEPRINT.md) — The initial design document.
+หลังรัน Backtest จะแสดง:
+
+```
+====================================================================================================
+=================================== BACKTEST PERFORMANCE SUMMARY ===================================
+====================================================================================================
+
++-- BACKTEST RESULT
+|
+| Total PnL         :       -13.85 USDT ( -1.39%)
+| Total Fees        :        16.89 USDT
+| Net PnL (w/ fees) :       -30.75 USDT
+| Win Rate          :        34.81%
+| Profit Factor     :       1.0356
+| Sharpe Ratio      :       0.8805
+| Sortino Ratio     :       1.2809
+| Max Winner        :         2.03 USDT
+| Max Loser         :        -1.43 USDT
+| Avg Winner        :         0.76 USDT
+| Avg Loser         :        -0.48 USDT
+|
++-- TRADE SUMMARY
+|
+| Total Orders      :          585
+| Total Positions   :          293
+|
+| Top 5 Best Trades:
+|         2.02669972 USDT @ 77781.9
+|         1.12146924 USDT @ 89372.2
+|         ...
+|
+| Initial Balance   :      1000.00 USDT
+| Final Balance     :       969.25 USDT
+| Net Change        :       -30.75 USDT
+```
+
+---
+
+## 🔧 ปรับแต่งพารามิเตอร์
+
+แก้ไขในไฟล์ [run_node.py](nautilus_backtest/run_node.py#L48-L57):
+
+```python
+def make_run_config(
+    *,
+    ema_fast: int = 9,           # EMA เร็ว
+    ema_medium: int = 21,        # EMA กลาง
+    ema_slow: int = 200,         # EMA ช้า (Bias filter)
+    rsi_long_min: float = 50.0,  # RSI ขั้นต่ำสำหรับ Long
+    rvol_threshold: float = 1.5, # Relative Volume ขั้นต่ำ
+    stop_loss_pct: float = 0.005,    # 0.5%
+    take_profit_pct: float = 0.010,  # 1.0%
+    slippage_prob: float = 0.5,      # Fill Model
+    run_id: str = "BACKTESTER-DEFAULT",
+) -> BacktestRunConfig:
+```
+
+---
+
+## 🦀 Rust Engine (mft_engine)
+
+**Status**: 🚧 Under Development
+
+เป็น high-performance trading engine เขียนด้วย Rust สำหรับ:
+- Live Trading execution
+- Real-time signal processing
+- WebSocket connection กับ Binance
+
+### Build & Run
+
+```bash
+cd mft_engine
+cargo build --release
+cargo run
+```
+
+---
+
+## 📖 เอกสารเพิ่มเติม
+
+### Strategy Details
+
+- [MFT Strategy Implementation](nautilus_backtest/strategies/mft_strategy.py)
+  - 3-Layer analysis logic
+  - Custom indicators (EMA, RSI, RVOL)
+  - State machine design
+
+### Data Pipeline
+
+- [fetch_data.py](nautilus_backtest/fetch_data.py)
+  - Binance Futures API integration
+  - Parquet catalog management
+  - Automatic batch fetching (1500 bars/request)
+
+### Backtest Engine
+
+- [run_node.py](nautilus_backtest/run_node.py)
+  - Nautilus BacktestNode wrapper
+  - Custom reports (PnL, Win Rate, Sharpe, etc.)
+  - Parameter sweep support
+
+---
+
+## 🎓 ทำความเข้าใจกลยุทธ์
+
+### ตัวอย่างสัญญาณ LONG
+
+```
+✅ เงื่อนไข:
+1. Price > EMA 200        (Bullish bias)
+2. EMA 9 > EMA 21         (Fast crosses above medium)
+3. RSI = 55               (Momentum zone, not overbought)
+4. RVOL = 2.1x            (High volume confirmation)
+
+➡️  ENTRY: Market Buy 0.001 BTC
+🛡️  Stop Loss:  -0.5%
+🎯  Take Profit: +1.0%
+```
+
+### ตัวอย่างสัญญาณ SHORT
+
+```
+✅ เงื่อนไข:
+1. Price < EMA 200        (Bearish bias)
+2. EMA 9 < EMA 21         (Fast crosses below medium)
+3. RSI = 42               (Momentum zone, not oversold)
+4. RVOL = 1.8x            (High volume confirmation)
+
+➡️  ENTRY: Market Sell 0.001 BTC
+🛡️  Stop Loss:  +0.5%
+🎯  Take Profit: -1.0%
+```
+
+---
+
+## 🔬 Parameter Optimization
+
+ใช้ `--sweep` mode เพื่อเปรียบเทียบพารามิเตอร์หลายชุด:
+
+```python
+# ใน run_node.py
+combos = [
+    (9,  21, 1.5, 0.005, 0.010, "EMA9-21_RVOL1.5"),
+    (9,  21, 2.0, 0.005, 0.010, "EMA9-21_RVOL2.0"),
+    (5,  13, 1.5, 0.005, 0.010, "EMA5-13_RVOL1.5"),
+    (12, 26, 1.5, 0.005, 0.010, "EMA12-26_RVOL1.5"),
+]
+```
+
+Backtest จะรันทั้งหมดและแสดงผลเปรียบเทียบ
 
 ---
 
 ## ⚠️ Disclaimer
-Trading futures involves significant risk. This software is for educational purposes only. Always test thoroughly on Testnet before going live.
+
+การเทรด Futures มีความเสี่ยงสูง โปรเจคนี้เป็นเพียงเครื่องมือสำหรับศึกษาเท่านั้น
+
+**คำเตือน**:
+- ❌ ไม่ใช่คำแนะนำในการลงทุน
+- ❌ ผู้พัฒนาไม่รับผิดชอบต่อผลกำไร/ขาดทุน
+- ✅ ทดสอบบน Testnet ก่อนใช้จริงเสมอ
+- ✅ เข้าใจกลยุทธ์และพารามิเตอร์ก่อนใช้งาน
 
 ---
-*Developed with ❤️ by Antigravity*
+
+## 📝 License
+
+MIT License — ใช้งานอิสระ แต่ใช้งานด้วยความระมัดระวัง
+
+---
+
+## 🙏 Acknowledgments
+
+- [Nautilus Trader](https://nautilustrader.io/) — High-performance trading framework
+- [Binance API](https://binance-docs.github.io/apidocs/futures/en/) — Market data provider
+- Community contributors
+
+---
+
+**Developed by Antigravity** | Last Updated: 2026-02-24
