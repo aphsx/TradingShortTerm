@@ -151,28 +151,34 @@ def print_nautilus_reports(results: list) -> None:
     """
     แสดงรายงานสรุปผลการเทรด (Default Nautilus Statistics)
     """
-    from nautilus_trader.analysis import PortfolioAnalyzer
-
     if not results:
         print("\n[WARN] No results to report.")
         return
-
-    # ใช้ PortfolioAnalyzer เพื่อดึงสถิติมาตรฐานของ Nautilus
-    analyzer = PortfolioAnalyzer(results=results)
 
     print("\n" + "=" * 72)
     print(" NAUTILUS TRADER PERFORMANCE SUMMARY ".center(72, "="))
     print("=" * 72)
 
-    # แสดงสถิติทั่วไป (Win Rate, Total Trades, etc.)
-    print("\n[ GENERAL STATISTICS ]")
-    for line in analyzer.get_stats_general_formatted():
-        print(f"  {line}")
+    # แสดงผลของแต่ละ BacktestResult
+    for i, result in enumerate(results, 1):
+        if len(results) > 1:
+            print(f"\n[ RESULT #{i}: {result.run_config_id} ]")
 
-    # แสดงสถิติ PnL (Gross/Net Profit, Fees, etc.)
-    print("\n[ PNL STATISTICS ]")
-    for line in analyzer.get_stats_pnls_formatted():
-        print(f"  {line}")
+        # แสดงสถิติ PnL (Gross/Net Profit, Fees, etc.)
+        print("\n[ PNL STATISTICS ]")
+        if result.stats_pnls:
+            for key, value in result.stats_pnls.items():
+                print(f"  {key}: {value}")
+        else:
+            print("  (No PnL statistics available)")
+
+        # แสดงสถิติ Returns (Sharpe, Max DD, etc.)
+        print("\n[ RETURN STATISTICS ]")
+        if result.stats_returns:
+            for key, value in result.stats_returns.items():
+                print(f"  {key}: {value}")
+        else:
+            print("  (No return statistics available)")
 
     print("\n" + "=" * 72)
 
@@ -192,10 +198,10 @@ def run():
         return
 
     W = 72
-    print("═" * W)
+    print("=" * W)
     mode = "SWEEP MODE" if SWEEP_MODE else "SINGLE RUN"
     print(f"  Nautilus BacktestNode — {mode}".center(W))
-    print("═" * W)
+    print("=" * W)
     print(f"  Catalog    : {CATALOG_PATH.resolve()}")
     print(f"  Instrument : {instruments[0].id}")
 
@@ -208,9 +214,9 @@ def run():
 
     print_nautilus_reports(results)
 
-    print("═" * W)
+    print("=" * W)
     print("  [DONE] All Nautilus default reports shown".center(W))
-    print("═" * W)
+    print("=" * W)
 
 
 if __name__ == "__main__":
