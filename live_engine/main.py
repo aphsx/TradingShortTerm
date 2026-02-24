@@ -86,6 +86,9 @@ class LiveTradingSystem:
             asyncio.create_task(
                 self._orphan_checker(), name="orphan_check"
             ),
+            asyncio.create_task(
+                self._daily_reset_scheduler(), name="daily_reset"
+            ),
         ]
 
         # Graceful shutdown on SIGINT/SIGTERM
@@ -226,6 +229,28 @@ class LiveTradingSystem:
             await asyncio.sleep(10)
             await self.oms.check_orphans(rest_client=None)  # TODO: pass REST client
             self.oms.cleanup_terminal()
+
+    async def _daily_reset_scheduler(self):
+        """Reset CircuitBreaker counters at 00:00 UTC every day."""
+        import datetime
+        while not self.shutdown_event.is_set():
+            now = datetime.datetime.now(datetime.timezone.utc)
+            # คำนวณเวลาที่เหลือจนถึง 00:00 UTC วันถัดไป
+            tomorrow = (now + datetime.timedelta(days=1)).replace(
+                hour=0, minute=0, second=5, microsecond=0
+            )
+            wait_secs = (tomorrow - now).total_seconds()
+            logger.info(f"[DAILY RESET] Next reset in {wait_secs/3600:.1f}h (at {tomorrow.strftime('%Y-%m-%d %H:%M:%S')} UTC)")
+            try:
+                await asyncio.wait_for(
+                    self.shutdown_event.wait(), timeout=wait_secs
+                )
+            except asyncio.TimeoutError:
+                pass  # ครบเวลา → reset
+
+            if not self.shutdown_event.is_set():
+                self.circuit_breaker.reset_daily()
+                logger.info("[DAILY RESET] CircuitBreaker daily counters reset (00:00 UTC)")
 
 
 def main():

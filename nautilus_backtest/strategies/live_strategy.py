@@ -385,8 +385,12 @@ class LiveStrategy(Strategy):
         # ── Circuit breaker / cooldown state (mirrors live_engine) ──
         self._consecutive_losses: int = 0
         self._daily_trades: int = 0
+        self._current_day: int = -1          # วันปัจจุบัน (UTC) สำหรับ reset daily counter
         self._bars_since_last_close: int = 9999
         self._pause_until_bar: int = 0
+
+        # ── Entry qty state (เก็บไว้ใช้ตอนปิด) ──
+        self._entry_qty: float = 0.001
 
         # ── Stats ──
         self._total_trades: int = 0
@@ -424,6 +428,12 @@ class LiveStrategy(Strategy):
         low    = float(bar.low)
         open_  = float(bar.open)
         volume = float(bar.volume)
+
+        # ── Reset daily trade counter เมื่อขึ้นวันใหม่ (UTC) ──
+        bar_day = bar.ts_event // 86_400_000_000_000   # nanoseconds → วัน
+        if bar_day != self._current_day:
+            self._current_day = bar_day
+            self._daily_trades = 0
 
         # Write into circular buffer
         idx = self._buf_idx % len(self._closes)
@@ -692,6 +702,7 @@ class LiveStrategy(Strategy):
         self._entry_side = side
         self._entry_bar = self._bar_count
         self._entry_atr = atr
+        self._entry_qty = qty              # เก็บ qty จริงไว้ใช้ตอนปิด
         self._trailing_active = False
         self._trailing_stop = 0.0
         self._highest_since_entry = price
@@ -747,7 +758,7 @@ class LiveStrategy(Strategy):
         order = self.order_factory.market(
             instrument_id=self._instrument_id,
             order_side=close_side,
-            quantity=Quantity.from_str(f"{self.cfg.trade_size:.3f}"),
+            quantity=Quantity.from_str(f"{self._entry_qty:.3f}"),  # ใช้ qty จาก entry จริง
             reduce_only=True,
         )
         self.submit_order(order)
