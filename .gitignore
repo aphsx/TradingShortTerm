@@ -58,3 +58,8 @@ debug/
 release/
 catalog/data/
 reports/
+nautilus_backtest/catalog/data/
+nautilus_backtest/reports/
+nautilus_backtest/nautilus_backtest/catalog/data/
+
+
