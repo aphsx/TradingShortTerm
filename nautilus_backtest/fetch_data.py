@@ -231,8 +231,21 @@ def fetch_binance_agg_trades(symbol: str, start_ms: int, end_ms: int) -> list:
                 "limit":  MAX_TRADES_PER_REQUEST,
             }
 
-        resp = requests.get(BINANCE_FUTURES_AGTRADES, params=params, timeout=15)
-        resp.raise_for_status()
+        # Retry with backoff on rate limit or transient errors
+        for attempt in range(5):
+            try:
+                resp = requests.get(BINANCE_FUTURES_AGTRADES, params=params, timeout=15)
+                if resp.status_code == 429:
+                    wait = int(resp.headers.get("Retry-After", 10)) + attempt * 5
+                    print(f"\n    [Rate limit] Waiting {wait}s before retry...", end="\r")
+                    time.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                break
+            except requests.exceptions.ConnectionError:
+                wait = 5 * (attempt + 1)
+                print(f"\n    [ConnError] Retry in {wait}s...", end="\r")
+                time.sleep(wait)
         trades = resp.json()
 
         if not trades:
@@ -266,7 +279,7 @@ def fetch_binance_agg_trades(symbol: str, start_ms: int, end_ms: int) -> list:
         # ต่อ batch ถัดไปจาก aggTradeId สุดท้าย + 1
         from_id = last_trade["a"] + 1
 
-        time.sleep(0.05)  # rate limit: ป้องกัน 429
+        time.sleep(0.2)  # rate limit: ป้องกัน 429 (0.2s = ~5 req/s ปลอดภัยกว่า)
 
     print()
     return all_trades
