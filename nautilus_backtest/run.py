@@ -22,7 +22,8 @@ from nautilus_trader.config import (
     BacktestDataConfig,
     BacktestEngineConfig,
     BacktestRunConfig,
-    BacktestVenueConfig,c    ImportableStrategyConfig,
+    BacktestVenueConfig,
+    ImportableStrategyConfig,
     LoggingConfig,
 )
 from nautilus_trader.model.data import Bar, BarType, TradeTick
