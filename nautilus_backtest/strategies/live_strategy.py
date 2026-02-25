@@ -1,19 +1,20 @@
 """
-live_strategy.py — Nautilus Backtest Strategy (mirrors live_engine exactly)
-============================================================================
-Strategy นี้ port logic จาก live_engine มาทุกส่วน:
-  - indicators.py  → calc_ema, calc_rsi, calc_atr, calc_bollinger,
-                      detect_squeeze, calc_vwap, calc_rvol, order_book_imbalance
-  - signal_engine.py → VolumeBar, CVDTracker, LiquiditySweepDetector,
-                        detect_regime, SignalEngine (MarketRegime filter)
-  - risk.py        → dynamic_position_size, CircuitBreaker counters
+live_strategy.py — Nautilus Backtest Strategy
+==============================================
+ใช้ Nautilus built-in สำหรับ infrastructure:
+  - ExponentialMovingAverage, RelativeStrengthIndex, AverageTrueRange, BollingerBands
+  - TradeTick subscription → CVD จริงจาก is_buyer_maker
+  - ValueBar ($50k INTERNAL) — เหมือน live_engine VolumeBarAggregator 100%
+  - Dynamic position sizing จาก self.portfolio
 
-เนื่องจาก Nautilus backtest รับ Bar (OHLCV) ไม่ใช่ tick/aggTrade
-จึงปรับดังนี้:
-  - ใช้ 5-MINUTE Bar (ตรงกับ live bot จริง)
-  - CVD ประมาณจาก (close - open) / range ต่อ bar
-  - OBI ไม่มีข้อมูลจริง → ตั้งเป็น 0 (ไม่ boost confidence)
-  - CircuitBreaker ใช้ consecutive loss tracker เหมือน live
+กลยุทธ์การเทรดของเรา (ไม่เปลี่ยน):
+  - VWAP rolling period (custom, Nautilus ใช้ session-based)
+  - RVOL (custom)
+  - detect_squeeze() (custom)
+  - detect_regime() (custom)
+  - LiquiditySweepDetector (custom)
+  - Signal logic: BREAKOUT / MEAN_REV / SWEEP (ไม่เปลี่ยน)
+  - Circuit breakers (ไม่เปลี่ยน)
 """
 
 from __future__ import annotations
@@ -26,22 +27,28 @@ from enum import Enum
 import numpy as np
 
 from nautilus_trader.config import StrategyConfig
-from nautilus_trader.model.data import Bar, BarType
-from nautilus_trader.model.enums import OrderSide
-from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.objects import Quantity
+from nautilus_trader.indicators.average.ema import ExponentialMovingAverage
+from nautilus_trader.indicators.atr import AverageTrueRange
+from nautilus_trader.indicators.bollinger_bands import BollingerBands
+from nautilus_trader.indicators.rsi import RelativeStrengthIndex
+from nautilus_trader.model.currencies import USDT
+from nautilus_trader.model.data import Bar, BarType, TradeTick
+from nautilus_trader.model.enums import AggressorSide, OrderSide
+from nautilus_trader.model.identifiers import InstrumentId, Venue
+from nautilus_trader.model.objects import Currency, Quantity
 from nautilus_trader.trading.strategy import Strategy
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Config — mirrors live_engine/config.py TradingConfig
+# Config
 # ═══════════════════════════════════════════════════════════════════════
 
 class LiveStrategyConfig(StrategyConfig, frozen=True):
     instrument_id: str = "BTCUSDT-PERP.BINANCE"
-    bar_type: str = "BTCUSDT-PERP.BINANCE-5-MINUTE-LAST-EXTERNAL"
+    # ValueBar $50k INTERNAL — เหมือน live_engine
+    bar_type: str = "BTCUSDT-PERP.BINANCE-50000-VALUE-LAST-INTERNAL"
 
-    # ── Indicator Periods (live_engine/config.py) ──
+    # ── Indicator Periods ──
     ema_fast: int = 9
     ema_medium: int = 21
     ema_trend: int = 50
@@ -60,16 +67,16 @@ class LiveStrategyConfig(StrategyConfig, frozen=True):
     rvol_threshold: float = 1.3
     min_ema_spread_pct: float = 0.0005
     min_atr_pct: float = 0.001
-    entry_mode: str = "hybrid"   # breakout | mean_rev | hybrid
+    entry_mode: str = "hybrid"
 
     # ── Risk Management ──
+    risk_per_trade_pct: float = 0.01       # 1% risk per trade (dynamic sizing)
     atr_sl_multiplier: float = 2.0
     atr_tp_multiplier: float = 4.0
     trailing_activate_atr: float = 2.0
     trailing_distance_atr: float = 1.0
-    trade_size: float = 0.001            # fixed qty (สำหรับ backtest)
 
-    # ── Circuit Breaker / Cooldown (live_engine/config.py) ──
+    # ── Circuit Breaker / Cooldown ──
     cooldown_bars: int = 10
     max_consecutive_losses: int = 5
     pause_bars_after_streak: int = 60
@@ -86,7 +93,7 @@ class LiveStrategyConfig(StrategyConfig, frozen=True):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Enums — identical to live_engine/signal_engine.py
+# Enums
 # ═══════════════════════════════════════════════════════════════════════
 
 class SignalType(Enum):
@@ -106,89 +113,35 @@ class MarketRegime(Enum):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Indicators — pure NumPy (same algorithm as live_engine/indicators.py)
+# Custom indicators (ไม่มีใน Nautilus built-in)
 # ═══════════════════════════════════════════════════════════════════════
 
-def calc_ema(prices: np.ndarray, period: int) -> float:
-    n = len(prices)
-    if n == 0:
-        return 0.0
-    if n < period:
-        return float(prices[-1])
-    k = 2.0 / (period + 1)
-    result = float(prices[0])
-    for p in prices[1:]:
-        result = float(p) * k + result * (1.0 - k)
-    return result
-
-
-def calc_rsi(prices: np.ndarray, period: int) -> float:
-    n = len(prices)
-    if n < period + 1:
-        return 50.0
-    start = n - period - 1
-    avg_gain = 0.0
-    avg_loss = 0.0
-    delta = prices[start + 1] - prices[start]
-    if delta > 0:
-        avg_gain = delta
-    else:
-        avg_loss = -delta
-    for i in range(start + 2, n):
-        delta = prices[i] - prices[i - 1]
-        if delta > 0:
-            avg_gain = (avg_gain * (period - 1) + delta) / period
-            avg_loss = (avg_loss * (period - 1)) / period
-        else:
-            avg_gain = (avg_gain * (period - 1)) / period
-            avg_loss = (avg_loss * (period - 1) + (-delta)) / period
-    if avg_loss == 0.0:
-        return 100.0
-    return 100.0 - (100.0 / (1.0 + avg_gain / avg_loss))
-
-
-def calc_atr(highs: np.ndarray, lows: np.ndarray,
-             closes: np.ndarray, period: int) -> float:
-    n = len(highs)
-    if n < 2:
-        return float(highs[0] - lows[0]) if n > 0 else 0.0
-    if n < period + 1:
-        total = 0.0
-        for i in range(1, n):
-            tr = max(highs[i] - lows[i],
-                     abs(highs[i] - closes[i - 1]),
-                     abs(lows[i] - closes[i - 1]))
-            total += tr
-        return total / max(n - 1, 1)
-    atr_val = 0.0
-    for i in range(1, period + 1):
-        tr = max(highs[i] - lows[i],
-                 abs(highs[i] - closes[i - 1]),
-                 abs(lows[i] - closes[i - 1]))
-        atr_val += tr
-    atr_val /= period
-    for i in range(period + 1, n):
-        tr = max(highs[i] - lows[i],
-                 abs(highs[i] - closes[i - 1]),
-                 abs(lows[i] - closes[i - 1]))
-        atr_val = (atr_val * (period - 1) + tr) / period
-    return atr_val
-
-
-def calc_bollinger(closes: np.ndarray, period: int,
-                   num_std: float) -> tuple[float, float, float]:
+def calc_vwap(closes: np.ndarray, volumes: np.ndarray, period: int) -> float:
+    """Rolling VWAP (Nautilus ใช้ session-based ซึ่งต่างกัน)"""
     n = len(closes)
     if n < period:
-        v = float(closes[-1]) if n > 0 else 0.0
-        return (v, v, v)
-    window = closes[-period:]
-    middle = float(np.mean(window))
-    std = float(np.std(window, ddof=1))
-    return (middle + num_std * std, middle, middle - num_std * std)
+        return float(closes[-1]) if n > 0 else 0.0
+    c_win = closes[-period:]
+    v_win = volumes[-period:]
+    total_v = float(np.sum(v_win))
+    if total_v <= 0:
+        return float(closes[-1])
+    return float(np.sum(c_win * v_win) / total_v)
+
+
+def calc_rvol(volumes: np.ndarray, period: int) -> float:
+    """Relative Volume ratio (ไม่มีใน Nautilus)"""
+    n = len(volumes)
+    if n < period + 1:
+        return 0.0
+    current = float(volumes[-1])
+    avg = float(np.mean(volumes[-(period + 1):-1]))
+    return current / avg if avg > 0 else 0.0
 
 
 def detect_squeeze(closes: np.ndarray, bb_period: int,
                    bb_std: float, lookback: int) -> bool:
+    """BB squeeze detection — bandwidth percentile < 15%"""
     n = len(closes)
     if n < bb_period + lookback:
         return False
@@ -215,31 +168,6 @@ def detect_squeeze(closes: np.ndarray, bb_period: int,
     return percentile < 0.15
 
 
-def calc_vwap(closes: np.ndarray, volumes: np.ndarray, period: int) -> float:
-    n = len(closes)
-    if n < period:
-        return float(closes[-1]) if n > 0 else 0.0
-    c_win = closes[-period:]
-    v_win = volumes[-period:]
-    total_v = float(np.sum(v_win))
-    if total_v <= 0:
-        return float(closes[-1])
-    return float(np.sum(c_win * v_win) / total_v)
-
-
-def calc_rvol(volumes: np.ndarray, period: int) -> float:
-    n = len(volumes)
-    if n < period + 1:
-        return 0.0
-    current = float(volumes[-1])
-    avg = float(np.mean(volumes[-(period + 1):-1]))
-    return current / avg if avg > 0 else 0.0
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Market Regime Filter — identical to live_engine/signal_engine.py
-# ═══════════════════════════════════════════════════════════════════════
-
 def detect_regime(atr_history: np.ndarray, closes: np.ndarray,
                   ema_fast: float, ema_medium: float,
                   ema_trend: float) -> MarketRegime:
@@ -260,7 +188,7 @@ def detect_regime(atr_history: np.ndarray, closes: np.ndarray,
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Liquidity Sweep Detector — identical to live_engine/signal_engine.py
+# Liquidity Sweep Detector
 # ═══════════════════════════════════════════════════════════════════════
 
 class LiquiditySweepDetector:
@@ -278,11 +206,11 @@ class LiquiditySweepDetector:
         if n < needed:
             return SignalType.NONE
         recent_high = np.max(highs[-needed:-self.reversal_bars])
-        recent_low = np.min(lows[-needed:-self.reversal_bars])
-        sweep_highs = highs[-self.reversal_bars:]
-        sweep_lows = lows[-self.reversal_bars:]
+        recent_low  = np.min(lows[-needed:-self.reversal_bars])
+        sweep_highs  = highs[-self.reversal_bars:]
+        sweep_lows   = lows[-self.reversal_bars:]
         sweep_closes = closes[-self.reversal_bars:]
-        sweep_vols = volumes[-self.reversal_bars:]
+        sweep_vols   = volumes[-self.reversal_bars:]
         if (np.any(sweep_highs > recent_high)
                 and sweep_closes[-1] < recent_high
                 and np.max(sweep_vols) > avg_volume * self.vol_mult):
@@ -295,8 +223,7 @@ class LiquiditySweepDetector:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# CVD Approximator (ใช้ Bar แทน aggTrade)
-# bar CVD ≈ (close - open) / (high - low) × volume
+# CVD Tracker — update จาก TradeTick จริง (ไม่ต้อง approximate แล้ว)
 # ═══════════════════════════════════════════════════════════════════════
 
 class CVDTracker:
@@ -304,56 +231,56 @@ class CVDTracker:
         self.deltas: deque[float] = deque(maxlen=window)
         self.cumulative: float = 0.0
 
-    def update_from_bar(self, open_: float, high: float,
-                        low: float, close: float, volume: float) -> float:
-        rng = high - low
-        if rng > 0:
-            buy_ratio = (close - low) / rng
-        else:
-            buy_ratio = 0.5
-        buy_vol = volume * buy_ratio
-        sell_vol = volume * (1.0 - buy_ratio)
-        delta = buy_vol - sell_vol
+    def update(self, qty: float, is_buyer_maker: bool) -> float:
+        """อัพเดทจาก TradeTick จริง — ใช้ใน on_trade_tick()"""
+        delta = -qty if is_buyer_maker else qty
         self.deltas.append(delta)
         self.cumulative = sum(self.deltas)
         return self.cumulative
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# The Strategy
+# Strategy
 # ═══════════════════════════════════════════════════════════════════════
 
 class LiveStrategy(Strategy):
     """
-    Nautilus backtest strategy ที่ mirror live_engine ทุกส่วน:
-    - MarketRegime filter (CHOPPY → halt, VOLATILE → reduce)
-    - LiquiditySweepDetector (adversarial entries)
-    - AMS v2 signal logic (breakout / mean_rev / hybrid)
-    - ATR-based SL/TP + trailing stop
-    - CircuitBreaker counters (consecutive losses, daily trade limit)
-    - Cooldown + pause after loss streak
+    Nautilus backtest strategy:
+    - ใช้ Nautilus built-in: EMA, RSI, ATR, BollingerBands
+    - ใช้ TradeTick → CVD จริง ไม่ approximate
+    - ValueBar $50k = เหมือน live_engine ทุกประการ
+    - Dynamic sizing จาก portfolio balance
+    - กลยุทธ์การเทรด (signal logic) ไม่เปลี่ยน
     """
 
     def __init__(self, config: LiveStrategyConfig):
         super().__init__(config)
         self.cfg = config
         self._instrument_id = InstrumentId.from_str(config.instrument_id)
+        self._venue = Venue("BINANCE")
 
-        # ── Data buffers ──
+        # ── Nautilus built-in indicators ──
+        self.ema_fast   = ExponentialMovingAverage(config.ema_fast)
+        self.ema_medium = ExponentialMovingAverage(config.ema_medium)
+        self.ema_trend  = ExponentialMovingAverage(config.ema_trend)
+        self.rsi        = RelativeStrengthIndex(config.rsi_period)
+        self.atr        = AverageTrueRange(config.atr_period)
+        self.bb         = BollingerBands(config.bb_period, config.bb_std)
+
+        # ── Custom data buffers (ใช้กับ VWAP, RVOL, squeeze, regime, sweep) ──
         max_buf = (max(config.ema_trend, config.bb_period, config.atr_period,
                        config.vwap_period)
                    + config.bb_squeeze_lookback + 50)
-        self._closes = np.zeros(max_buf, dtype=np.float64)
-        self._highs = np.zeros(max_buf, dtype=np.float64)
-        self._lows = np.zeros(max_buf, dtype=np.float64)
+        self._closes  = np.zeros(max_buf, dtype=np.float64)
+        self._highs   = np.zeros(max_buf, dtype=np.float64)
+        self._lows    = np.zeros(max_buf, dtype=np.float64)
         self._volumes = np.zeros(max_buf, dtype=np.float64)
-        self._opens = np.zeros(max_buf, dtype=np.float64)
         self._atr_history = np.zeros(200, dtype=np.float64)
         self._buf_idx = 0
         self._atr_idx = 0
         self._bar_count = 0
 
-        # ── Sub-detectors ──
+        # ── Custom detectors ──
         self.sweep_detector = LiquiditySweepDetector(
             lookback=config.sweep_lookback,
             vol_spike_mult=config.sweep_vol_spike_mult,
@@ -361,40 +288,38 @@ class LiveStrategy(Strategy):
         )
         self.cvd = CVDTracker()
 
-        # ── Previous bar state (for crossover detection) ──
-        self._prev_ema_fast: float = 0.0
+        # ── Previous bar state ──
+        self._prev_ema_fast: float   = 0.0
         self._prev_ema_medium: float = 0.0
-        self._prev_close: float = 0.0
-        self._prev_bb_upper: float = 0.0
-        self._prev_bb_lower: float = 0.0
-        self._was_squeezed: bool = False
+        self._prev_close: float      = 0.0
+        self._prev_bb_upper: float   = 0.0
+        self._prev_bb_lower: float   = 0.0
+        self._was_squeezed: bool     = False
 
         # ── Position state ──
-        self._position_open: bool = False
-        self._entry_price: float = 0.0
+        self._position_open: bool        = False
+        self._entry_price: float         = 0.0
         self._entry_side: OrderSide | None = None
-        self._entry_bar: int = 0
-        self._entry_atr: float = 0.0
-        self._stop_loss: float = 0.0
-        self._take_profit: float = 0.0
-        self._trailing_active: bool = False
-        self._trailing_stop: float = 0.0
+        self._entry_bar: int             = 0
+        self._entry_atr: float           = 0.0
+        self._stop_loss: float           = 0.0
+        self._take_profit: float         = 0.0
+        self._trailing_active: bool      = False
+        self._trailing_stop: float       = 0.0
         self._highest_since_entry: float = 0.0
-        self._lowest_since_entry: float = float("inf")
+        self._lowest_since_entry: float  = float("inf")
+        self._entry_qty: float           = 0.001
 
-        # ── Circuit breaker / cooldown state (mirrors live_engine) ──
-        self._consecutive_losses: int = 0
-        self._daily_trades: int = 0
-        self._current_day: int = -1          # วันปัจจุบัน (UTC) สำหรับ reset daily counter
-        self._bars_since_last_close: int = 9999
-        self._pause_until_bar: int = 0
-
-        # ── Entry qty state (เก็บไว้ใช้ตอนปิด) ──
-        self._entry_qty: float = 0.001
+        # ── Circuit breaker / cooldown ──
+        self._consecutive_losses: int     = 0
+        self._daily_trades: int           = 0
+        self._current_day: int            = -1
+        self._bars_since_last_close: int  = 9999
+        self._pause_until_bar: int        = 0
 
         # ── Stats ──
         self._total_trades: int = 0
-        self._wins: int = 0
+        self._wins: int  = 0
         self._losses: int = 0
 
     # ─────────────────────────────────────────────────────────────────
@@ -403,11 +328,25 @@ class LiveStrategy(Strategy):
 
     def on_start(self):
         bar_type = BarType.from_str(self.cfg.bar_type)
+
+        # Register Nautilus indicators — auto-update ทุก bar
+        self.register_indicator_for_bars(bar_type, self.ema_fast)
+        self.register_indicator_for_bars(bar_type, self.ema_medium)
+        self.register_indicator_for_bars(bar_type, self.ema_trend)
+        self.register_indicator_for_bars(bar_type, self.rsi)
+        self.register_indicator_for_bars(bar_type, self.atr)
+        self.register_indicator_for_bars(bar_type, self.bb)
+
+        # Subscribe trade ticks → CVD จริง
+        self.subscribe_trade_ticks(self._instrument_id)
+
+        # Subscribe value bars → signal generation
         self.subscribe_bars(bar_type)
+
         self.log.info(
             f"[LiveStrategy] Started | instrument={self.cfg.instrument_id} "
-            f"| mode={self.cfg.entry_mode} | SL={self.cfg.atr_sl_multiplier}x "
-            f"| TP={self.cfg.atr_tp_multiplier}x ATR"
+            f"| bar={self.cfg.bar_type} | mode={self.cfg.entry_mode} "
+            f"| SL={self.cfg.atr_sl_multiplier}x | TP={self.cfg.atr_tp_multiplier}x ATR"
         )
 
     def on_stop(self):
@@ -419,67 +358,78 @@ class LiveStrategy(Strategy):
             )
 
     # ─────────────────────────────────────────────────────────────────
-    # Main bar handler
+    # TradeTick → CVD จริง (ไม่ approximate)
+    # ─────────────────────────────────────────────────────────────────
+
+    def on_trade_tick(self, tick: TradeTick):
+        """อัพเดท CVD จาก TradeTick จริง — เหมือน live_engine CVDTracker.update()"""
+        qty = float(tick.size)
+        is_buyer_maker = (tick.aggressor_side == AggressorSide.SELLER)
+        self.cvd.update(qty, is_buyer_maker)
+
+    # ─────────────────────────────────────────────────────────────────
+    # Bar handler — Nautilus auto-updates indicators ก่อน call นี้
     # ─────────────────────────────────────────────────────────────────
 
     def on_bar(self, bar: Bar):
         close  = float(bar.close)
         high   = float(bar.high)
         low    = float(bar.low)
-        open_  = float(bar.open)
         volume = float(bar.volume)
 
-        # ── Reset daily trade counter เมื่อขึ้นวันใหม่ (UTC) ──
-        bar_day = bar.ts_event // 86_400_000_000_000   # nanoseconds → วัน
+        # Daily trade counter reset (UTC)
+        bar_day = bar.ts_event // 86_400_000_000_000
         if bar_day != self._current_day:
             self._current_day = bar_day
             self._daily_trades = 0
 
-        # Write into circular buffer
+        # Update circular buffer (สำหรับ custom indicators)
         idx = self._buf_idx % len(self._closes)
         self._closes[idx]  = close
         self._highs[idx]   = high
         self._lows[idx]    = low
         self._volumes[idx] = volume
-        self._opens[idx]   = open_
         self._buf_idx += 1
         self._bar_count += 1
         self._bars_since_last_close += 1
 
-        # Warmup
+        # Warmup — รอให้ Nautilus indicators พร้อมและ buffer มีพอ
         if self._bar_count < self.cfg.warmup_bars:
             return
+        if not (self.ema_fast.initialized and self.rsi.initialized
+                and self.atr.initialized and self.bb.initialized):
+            return
 
-        # Get ordered arrays
+        # Get ordered arrays for custom calculations
         n = min(self._buf_idx, len(self._closes))
         roll_off = max(0, self._buf_idx - len(self._closes))
-        c = np.roll(self._closes, -roll_off)[:n]
-        h = np.roll(self._highs,  -roll_off)[:n]
-        lo = np.roll(self._lows,   -roll_off)[:n]
-        v = np.roll(self._volumes, -roll_off)[:n]
+        c  = np.roll(self._closes,  -roll_off)[:n]
+        h  = np.roll(self._highs,   -roll_off)[:n]
+        lo = np.roll(self._lows,    -roll_off)[:n]
+        v  = np.roll(self._volumes, -roll_off)[:n]
 
-        # ── Indicators ──
-        ema_f = calc_ema(c, self.cfg.ema_fast)
-        ema_m = calc_ema(c, self.cfg.ema_medium)
-        ema_t = calc_ema(c, self.cfg.ema_trend)
-        vwap  = calc_vwap(c, v, self.cfg.vwap_period)
-        rsi   = calc_rsi(c, self.cfg.rsi_period)
-        atr   = calc_atr(h, lo, c, self.cfg.atr_period)
-        bb_u, bb_mid, bb_l = calc_bollinger(c, self.cfg.bb_period, self.cfg.bb_std)
-        is_sq = detect_squeeze(c, self.cfg.bb_period, self.cfg.bb_std,
-                               self.cfg.bb_squeeze_lookback)
-        rvol  = calc_rvol(v, 20)
+        # ── Nautilus indicators (auto-updated, just read values) ──
+        ema_f  = self.ema_fast.value
+        ema_m  = self.ema_medium.value
+        ema_t  = self.ema_trend.value
+        rsi    = self.rsi.value
+        atr    = self.atr.value
+        bb_u   = self.bb.upper
+        bb_l   = self.bb.lower
 
-        # ── ATR history for regime ──
+        # ── Custom indicators ──
+        vwap   = calc_vwap(c, v, self.cfg.vwap_period)
+        rvol   = calc_rvol(v, 20)
+        is_sq  = detect_squeeze(c, self.cfg.bb_period, self.cfg.bb_std,
+                                self.cfg.bb_squeeze_lookback)
+
+        # ── ATR history for regime detection ──
         aidx = self._atr_idx % len(self._atr_history)
         self._atr_history[aidx] = atr
         self._atr_idx += 1
         atr_n = min(self._atr_idx, len(self._atr_history))
 
-        # ── CVD from bar ──
-        self.cvd.update_from_bar(open_, high, low, close, volume)
-
-        # ── Position management ──
+        # ── Position management or entry check ──
         if self._position_open:
             self._manage_position(close, high, low, ema_f, ema_m, ema_t, vwap)
         else:
@@ -490,7 +440,7 @@ class LiveStrategy(Strategy):
                 self._atr_history[:atr_n], n,
             )
 
-        # ── Save prev state ──
+        # Save prev state
         self._prev_ema_fast   = ema_f
         self._prev_ema_medium = ema_m
         self._prev_close      = close
@@ -499,7 +449,7 @@ class LiveStrategy(Strategy):
         self._was_squeezed    = is_sq
 
     # ─────────────────────────────────────────────────────────────────
-    # Entry Logic — mirrors live_engine/signal_engine.py on_volume_bar()
+    # Entry Logic (ไม่เปลี่ยน)
     # ─────────────────────────────────────────────────────────────────
 
     def _check_entry(
@@ -512,28 +462,21 @@ class LiveStrategy(Strategy):
     ):
         cfg = self.cfg
 
-        # ── Circuit breaker: daily trade limit ──
         if self._daily_trades >= cfg.max_daily_trades:
             return
-
-        # ── Cooldown ──
         if self._bars_since_last_close < cfg.cooldown_bars:
             return
-
-        # ── Loss-streak pause ──
         if self._bar_count < self._pause_until_bar:
             return
-
-        # ── Minimum volatility gate ──
         if close > 0 and (atr / close) < cfg.min_atr_pct:
             return
 
-        # ── Regime filter ──
+        # Regime filter
         regime = detect_regime(atr_hist, c, ema_f, ema_m, ema_t)
         if regime == MarketRegime.CHOPPY:
             return
 
-        # ── Liquidity sweep (adversarial) ──
+        # Liquidity sweep (adversarial)
         avg_vol = float(np.mean(v[-20:])) if n >= 20 else 0.0
         sweep = self.sweep_detector.detect(h, lo, c, v, avg_vol)
         if sweep in (SignalType.SWEEP_LONG, SignalType.SWEEP_SHORT):
@@ -542,11 +485,11 @@ class LiveStrategy(Strategy):
             self._enter(side, close, atr, sweep, size_mult)
             return
 
-        # ── Trend bias (Layer 1) ──
+        # Trend bias (Layer 1)
         ema_spread_pct = abs(ema_f - ema_m) / close if close > 0 else 0.0
-        bias_long = (close > vwap and close > ema_t
-                     and ema_f > ema_m
-                     and ema_spread_pct >= cfg.min_ema_spread_pct)
+        bias_long  = (close > vwap and close > ema_t
+                      and ema_f > ema_m
+                      and ema_spread_pct >= cfg.min_ema_spread_pct)
         bias_short = (close < vwap and close < ema_t
                       and ema_f < ema_m
                       and ema_spread_pct >= cfg.min_ema_spread_pct)
@@ -554,14 +497,14 @@ class LiveStrategy(Strategy):
         if not (bias_long or bias_short):
             return
 
-        # ── Signal detection (Layer 2) ──
+        # Signal detection (Layer 2)
         signal = self._detect_signal(close, bias_long, bias_short,
                                      ema_f, ema_m, bb_u, bb_l, is_sq,
                                      cfg.entry_mode)
         if signal == SignalType.NONE:
             return
 
-        # ── RSI confirmation (Layer 3) ──
+        # RSI confirmation (Layer 3)
         if signal in (SignalType.BREAKOUT_LONG, SignalType.MEAN_REV_LONG):
             if not (cfg.rsi_long_min <= rsi <= cfg.rsi_long_max):
                 return
@@ -569,11 +512,10 @@ class LiveStrategy(Strategy):
             if not (cfg.rsi_short_min <= rsi <= cfg.rsi_short_max):
                 return
 
-        # ── Volume confirmation (Layer 4) ──
+        # Volume confirmation (Layer 4)
         if rvol < cfg.rvol_threshold:
             return
 
-        # ── Submit entry ──
         is_long = signal in (SignalType.BREAKOUT_LONG, SignalType.MEAN_REV_LONG)
         side = OrderSide.BUY if is_long else OrderSide.SELL
         size_mult = 0.5 if regime == MarketRegime.VOLATILE else 1.0
@@ -583,15 +525,15 @@ class LiveStrategy(Strategy):
         self, close, bias_long, bias_short,
         ema_f, ema_m, bb_u, bb_l, is_sq, mode,
     ) -> SignalType:
-        """Same crossover + BB logic as live_engine SignalEngine._detect_signal()"""
-        had_cross_up = (self._prev_ema_fast > 0
-                        and self._prev_ema_fast <= self._prev_ema_medium
-                        and ema_f > ema_m)
+        had_cross_up   = (self._prev_ema_fast > 0
+                          and self._prev_ema_fast <= self._prev_ema_medium
+                          and ema_f > ema_m)
         had_cross_down = (self._prev_ema_fast > 0
                           and self._prev_ema_fast >= self._prev_ema_medium
                           and ema_f < ema_m)
 
         if mode in ("breakout", "hybrid"):
+            # ✅ ใช้ _was_squeezed (bar ก่อนหน้า) — ตรงกับ live_engine
             if self._was_squeezed:
                 if bias_long and close > bb_u:
                     if had_cross_up or ema_f > ema_m:
@@ -616,18 +558,16 @@ class LiveStrategy(Strategy):
         return SignalType.NONE
 
     # ─────────────────────────────────────────────────────────────────
-    # Position Management — mirrors live_engine risk/trailing logic
+    # Position Management (ไม่เปลี่ยน)
     # ─────────────────────────────────────────────────────────────────
 
-    def _manage_position(self, close, high, low,
-                         ema_f, ema_m, ema_t, vwap):
+    def _manage_position(self, close, high, low, ema_f, ema_m, ema_t, vwap):
         cfg = self.cfg
         bars_in_trade = self._bar_count - self._entry_bar
 
         if self._entry_side == OrderSide.BUY:
             self._highest_since_entry = max(self._highest_since_entry, high)
 
-            # Trailing stop activation
             unrealized_atr = ((high - self._entry_price) / self._entry_atr
                               if self._entry_atr > 0 else 0.0)
             if unrealized_atr >= cfg.trailing_activate_atr:
@@ -637,7 +577,6 @@ class LiveStrategy(Strategy):
                 if new_trail > self._trailing_stop:
                     self._trailing_stop = new_trail
 
-            # Exit priority order (same as ams_scalper / live_engine)
             if self._trailing_active and low <= self._trailing_stop:
                 self._close_position(close, "TRAILING")
                 return
@@ -650,7 +589,6 @@ class LiveStrategy(Strategy):
             if bars_in_trade >= cfg.max_bars_in_trade:
                 self._close_position(close, "TIMEOUT")
                 return
-            # Trend reversal exit
             if (close < vwap and close < ema_t and ema_f < ema_m):
                 self._close_position(close, "REVERSAL")
                 return
@@ -687,35 +625,55 @@ class LiveStrategy(Strategy):
     # Order helpers
     # ─────────────────────────────────────────────────────────────────
 
+    def _calc_qty(self, atr: float, size_mult: float) -> float:
+        """Dynamic position sizing จาก portfolio balance (แทน fixed trade_size)"""
+        try:
+            account = self.portfolio.account(self._venue)
+            if account is None:
+                return 0.001
+            balance = account.balance_free(Currency.from_str("USDT"))
+            if balance is None:
+                return 0.001
+            balance_usdt = float(balance.as_double())
+        except Exception:
+            return 0.001
+
+        risk_amount = balance_usdt * self.cfg.risk_per_trade_pct
+        sl_distance = atr * self.cfg.atr_sl_multiplier
+        if sl_distance <= 0:
+            return 0.001
+
+        qty = (risk_amount / sl_distance) * size_mult
+        return max(0.001, round(qty, 3))
+
     def _enter(self, side: OrderSide, price: float, atr: float,
                signal: SignalType, size_mult: float = 1.0):
-        cfg = self.cfg
         if atr <= 0:
             return
 
-        qty = round(cfg.trade_size * size_mult, 3)
+        qty = self._calc_qty(atr, size_mult)
         if qty < 0.001:
             return
 
         self._position_open = True
-        self._entry_price = price
-        self._entry_side = side
-        self._entry_bar = self._bar_count
-        self._entry_atr = atr
-        self._entry_qty = qty              # เก็บ qty จริงไว้ใช้ตอนปิด
+        self._entry_price   = price
+        self._entry_side    = side
+        self._entry_bar     = self._bar_count
+        self._entry_atr     = atr
+        self._entry_qty     = qty
         self._trailing_active = False
-        self._trailing_stop = 0.0
+        self._trailing_stop   = 0.0
         self._highest_since_entry = price
-        self._lowest_since_entry = price
+        self._lowest_since_entry  = price
         self._total_trades += 1
         self._daily_trades += 1
 
         if side == OrderSide.BUY:
-            self._stop_loss   = price - atr * cfg.atr_sl_multiplier
-            self._take_profit = price + atr * cfg.atr_tp_multiplier
+            self._stop_loss   = price - atr * self.cfg.atr_sl_multiplier
+            self._take_profit = price + atr * self.cfg.atr_tp_multiplier
         else:
-            self._stop_loss   = price + atr * cfg.atr_sl_multiplier
-            self._take_profit = price - atr * cfg.atr_tp_multiplier
+            self._stop_loss   = price + atr * self.cfg.atr_sl_multiplier
+            self._take_profit = price - atr * self.cfg.atr_tp_multiplier
 
         order = self.order_factory.market(
             instrument_id=self._instrument_id,
@@ -737,7 +695,6 @@ class LiveStrategy(Strategy):
                if self._entry_side == OrderSide.BUY
                else self._entry_price - close_price)
 
-        # ── CircuitBreaker state update (mirrors live_engine/risk.py) ──
         if pnl > 0:
             self._wins += 1
             self._consecutive_losses = 0
@@ -758,7 +715,7 @@ class LiveStrategy(Strategy):
         order = self.order_factory.market(
             instrument_id=self._instrument_id,
             order_side=close_side,
-            quantity=Quantity.from_str(f"{self._entry_qty:.3f}"),  # ใช้ qty จาก entry จริง
+            quantity=Quantity.from_str(f"{self._entry_qty:.3f}"),
             reduce_only=True,
         )
         self.submit_order(order)
@@ -768,15 +725,15 @@ class LiveStrategy(Strategy):
         )
 
         # Reset position state
-        self._position_open = False
-        self._entry_price = 0.0
-        self._entry_side = None
-        self._entry_bar = 0
-        self._entry_atr = 0.0
-        self._stop_loss = 0.0
-        self._take_profit = 0.0
+        self._position_open   = False
+        self._entry_price     = 0.0
+        self._entry_side      = None
+        self._entry_bar       = 0
+        self._entry_atr       = 0.0
+        self._stop_loss       = 0.0
+        self._take_profit     = 0.0
         self._trailing_active = False
-        self._trailing_stop = 0.0
+        self._trailing_stop   = 0.0
         self._highest_since_entry = 0.0
-        self._lowest_since_entry = float("inf")
+        self._lowest_since_entry  = float("inf")
         self._bars_since_last_close = 0
