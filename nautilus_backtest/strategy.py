@@ -1,6 +1,6 @@
 """
-live_strategy.py — Nautilus Backtest Strategy
-==============================================
+strategy.py — Nautilus Backtest Strategy
+=========================================
 ใช้ Nautilus built-in สำหรับ infrastructure:
   - ExponentialMovingAverage, RelativeStrengthIndex, AverageTrueRange, BollingerBands
   - TradeTick subscription → CVD จริงจาก is_buyer_maker
@@ -256,23 +256,18 @@ class LiveStrategy(Strategy):
     """
 
     def __init__(self, config: LiveStrategyConfig):
-        print("[LiveStrategy] Init start...")
         super().__init__(config)
-        print("[LiveStrategy] Super init done")
         self.cfg = config
         self._instrument_id = InstrumentId.from_str(config.instrument_id)
         self._venue = Venue("BINANCE")
-        print(f"[LiveStrategy] IDs created: {self._instrument_id}")
 
         # ── Nautilus built-in indicators ──
-        print("[LiveStrategy] Creating indicators...")
         self.ema_fast   = ExponentialMovingAverage(config.ema_fast)
         self.ema_medium = ExponentialMovingAverage(config.ema_medium)
         self.ema_trend  = ExponentialMovingAverage(config.ema_trend)
         self.rsi        = RelativeStrengthIndex(config.rsi_period)
         self.atr        = AverageTrueRange(config.atr_period)
         self.bb         = BollingerBands(config.bb_period, config.bb_std)
-        print("[LiveStrategy] Indicators created")
 
         # ── Custom data buffers (ใช้กับ VWAP, RVOL, squeeze, regime, sweep) ──
         max_buf = (max(config.ema_trend, config.bb_period, config.atr_period,
@@ -369,7 +364,6 @@ class LiveStrategy(Strategy):
     # ─────────────────────────────────────────────────────────────────
 
     def on_trade_tick(self, tick: TradeTick):
-        """อัพเดท CVD จาก TradeTick จริง — เหมือน live_engine CVDTracker.update()"""
         qty = float(tick.size)
         is_buyer_maker = (tick.aggressor_side == AggressorSide.SELLER)
         self.cvd.update(qty, is_buyer_maker)
@@ -384,13 +378,11 @@ class LiveStrategy(Strategy):
         low    = float(bar.low)
         volume = float(bar.volume)
 
-        # Daily trade counter reset (UTC)
         bar_day = bar.ts_event // 86_400_000_000_000
         if bar_day != self._current_day:
             self._current_day = bar_day
             self._daily_trades = 0
 
-        # Update circular buffer (สำหรับ custom indicators)
         idx = self._buf_idx % len(self._closes)
         self._closes[idx]  = close
         self._highs[idx]   = high
@@ -400,14 +392,15 @@ class LiveStrategy(Strategy):
         self._bar_count += 1
         self._bars_since_last_close += 1
 
-        # Warmup — รอให้ Nautilus indicators พร้อมและ buffer มีพอ
+        if self._bar_count % 1000 == 0:
+            self.log.info(f"[LiveStrategy] Progress: {self._bar_count} bars processed...")
+
         if self._bar_count < self.cfg.warmup_bars:
             return
         if not (self.ema_fast.initialized and self.rsi.initialized
                 and self.atr.initialized and self.bb.initialized):
             return
 
-        # Get ordered arrays for custom calculations
         n = min(self._buf_idx, len(self._closes))
         roll_off = max(0, self._buf_idx - len(self._closes))
         c  = np.roll(self._closes,  -roll_off)[:n]
@@ -415,7 +408,6 @@ class LiveStrategy(Strategy):
         lo = np.roll(self._lows,    -roll_off)[:n]
         v  = np.roll(self._volumes, -roll_off)[:n]
 
-        # ── Nautilus indicators (auto-updated, just read values) ──
         ema_f  = self.ema_fast.value
         ema_m  = self.ema_medium.value
         ema_t  = self.ema_trend.value
@@ -424,19 +416,16 @@ class LiveStrategy(Strategy):
         bb_u   = self.bb.upper
         bb_l   = self.bb.lower
 
-        # ── Custom indicators ──
         vwap   = calc_vwap(c, v, self.cfg.vwap_period)
         rvol   = calc_rvol(v, 20)
         is_sq  = detect_squeeze(c, self.cfg.bb_period, self.cfg.bb_std,
                                 self.cfg.bb_squeeze_lookback)
 
-        # ── ATR history for regime detection ──
         aidx = self._atr_idx % len(self._atr_history)
         self._atr_history[aidx] = atr
         self._atr_idx += 1
         atr_n = min(self._atr_idx, len(self._atr_history))
 
-        # ── Position management or entry check ──
         if self._position_open:
             self._manage_position(close, high, low, ema_f, ema_m, ema_t, vwap)
         else:
@@ -447,7 +436,6 @@ class LiveStrategy(Strategy):
                 self._atr_history[:atr_n], n,
             )
 
-        # Save prev state
         self._prev_ema_fast   = ema_f
         self._prev_ema_medium = ema_m
         self._prev_close      = close
@@ -456,17 +444,12 @@ class LiveStrategy(Strategy):
         self._was_squeezed    = is_sq
 
     # ─────────────────────────────────────────────────────────────────
-    # Entry Logic (ไม่เปลี่ยน)
+    # Entry Logic
     # ─────────────────────────────────────────────────────────────────
 
-    def _check_entry(
-        self, c, h, lo, v,
-        close, high, low,
-        ema_f, ema_m, ema_t,
-        vwap, rsi, atr,
-        bb_u, bb_l, is_sq, rvol,
-        atr_hist, n,
-    ):
+    def _check_entry(self, c, h, lo, v, close, high, low,
+                     ema_f, ema_m, ema_t, vwap, rsi, atr,
+                     bb_u, bb_l, is_sq, rvol, atr_hist, n):
         cfg = self.cfg
 
         if self._daily_trades >= cfg.max_daily_trades:
@@ -478,12 +461,10 @@ class LiveStrategy(Strategy):
         if close > 0 and (atr / close) < cfg.min_atr_pct:
             return
 
-        # Regime filter
         regime = detect_regime(atr_hist, c, ema_f, ema_m, ema_t)
         if regime == MarketRegime.CHOPPY:
             return
 
-        # Liquidity sweep (adversarial)
         avg_vol = float(np.mean(v[-20:])) if n >= 20 else 0.0
         sweep = self.sweep_detector.detect(h, lo, c, v, avg_vol)
         if sweep in (SignalType.SWEEP_LONG, SignalType.SWEEP_SHORT):
@@ -492,7 +473,6 @@ class LiveStrategy(Strategy):
             self._enter(side, close, atr, sweep, size_mult)
             return
 
-        # Trend bias (Layer 1)
         ema_spread_pct = abs(ema_f - ema_m) / close if close > 0 else 0.0
         bias_long  = (close > vwap and close > ema_t
                       and ema_f > ema_m
@@ -504,14 +484,12 @@ class LiveStrategy(Strategy):
         if not (bias_long or bias_short):
             return
 
-        # Signal detection (Layer 2)
         signal = self._detect_signal(close, bias_long, bias_short,
                                      ema_f, ema_m, bb_u, bb_l, is_sq,
                                      cfg.entry_mode)
         if signal == SignalType.NONE:
             return
 
-        # RSI confirmation (Layer 3)
         if signal in (SignalType.BREAKOUT_LONG, SignalType.MEAN_REV_LONG):
             if not (cfg.rsi_long_min <= rsi <= cfg.rsi_long_max):
                 return
@@ -519,7 +497,6 @@ class LiveStrategy(Strategy):
             if not (cfg.rsi_short_min <= rsi <= cfg.rsi_short_max):
                 return
 
-        # Volume confirmation (Layer 4)
         if rvol < cfg.rvol_threshold:
             return
 
@@ -528,10 +505,8 @@ class LiveStrategy(Strategy):
         size_mult = 0.5 if regime == MarketRegime.VOLATILE else 1.0
         self._enter(side, close, atr, signal, size_mult)
 
-    def _detect_signal(
-        self, close, bias_long, bias_short,
-        ema_f, ema_m, bb_u, bb_l, is_sq, mode,
-    ) -> SignalType:
+    def _detect_signal(self, close, bias_long, bias_short,
+                       ema_f, ema_m, bb_u, bb_l, is_sq, mode) -> SignalType:
         had_cross_up   = (self._prev_ema_fast > 0
                           and self._prev_ema_fast <= self._prev_ema_medium
                           and ema_f > ema_m)
@@ -540,7 +515,6 @@ class LiveStrategy(Strategy):
                           and ema_f < ema_m)
 
         if mode in ("breakout", "hybrid"):
-            # ✅ ใช้ _was_squeezed (bar ก่อนหน้า) — ตรงกับ live_engine
             if self._was_squeezed:
                 if bias_long and close > bb_u:
                     if had_cross_up or ema_f > ema_m:
@@ -565,7 +539,7 @@ class LiveStrategy(Strategy):
         return SignalType.NONE
 
     # ─────────────────────────────────────────────────────────────────
-    # Position Management (ไม่เปลี่ยน)
+    # Position Management
     # ─────────────────────────────────────────────────────────────────
 
     def _manage_position(self, close, high, low, ema_f, ema_m, ema_t, vwap):
@@ -633,7 +607,6 @@ class LiveStrategy(Strategy):
     # ─────────────────────────────────────────────────────────────────
 
     def _calc_qty(self, atr: float, size_mult: float) -> float:
-        """Dynamic position sizing จาก portfolio balance (แทน fixed trade_size)"""
         try:
             account = self.portfolio.account(self._venue)
             if account is None:
@@ -731,7 +704,6 @@ class LiveStrategy(Strategy):
             f"PnL≈{pnl:.2f} streak={self._consecutive_losses}"
         )
 
-        # Reset position state
         self._position_open   = False
         self._entry_price     = 0.0
         self._entry_side      = None
