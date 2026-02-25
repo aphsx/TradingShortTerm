@@ -22,11 +22,10 @@ from nautilus_trader.config import (
     BacktestDataConfig,
     BacktestEngineConfig,
     BacktestRunConfig,
-    BacktestVenueConfig,
-    ImportableStrategyConfig,
+    BacktestVenueConfig,c    ImportableStrategyConfig,
     LoggingConfig,
 )
-from nautilus_trader.model.data import BarType, TradeTick
+from nautilus_trader.model.data import Bar, BarType, TradeTick
 from nautilus_trader.model.enums import AccountType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
@@ -97,6 +96,11 @@ def make_config(
             BacktestDataConfig(
                 catalog_path=str(CATALOG_PATH),
                 data_cls=TradeTick,
+                instrument_id=InstrumentId.from_str(INSTRUMENT_ID_STR),
+            ),
+            BacktestDataConfig(
+                catalog_path=str(CATALOG_PATH),
+                data_cls=Bar,
                 instrument_id=InstrumentId.from_str(INSTRUMENT_ID_STR),
                 bar_types=[VALUE_BAR_TYPE],
             )
