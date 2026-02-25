@@ -27,10 +27,12 @@ from enum import Enum
 import numpy as np
 
 from nautilus_trader.config import StrategyConfig
-from nautilus_trader.indicators.average.ema import ExponentialMovingAverage
-from nautilus_trader.indicators.atr import AverageTrueRange
-from nautilus_trader.indicators.bollinger_bands import BollingerBands
-from nautilus_trader.indicators.rsi import RelativeStrengthIndex
+from nautilus_trader.indicators import (
+    ExponentialMovingAverage,
+    AverageTrueRange,
+    BollingerBands,
+    RelativeStrengthIndex,
+)
 from nautilus_trader.model.currencies import USDT
 from nautilus_trader.model.data import Bar, BarType, TradeTick
 from nautilus_trader.model.enums import AggressorSide, OrderSide
@@ -254,18 +256,23 @@ class LiveStrategy(Strategy):
     """
 
     def __init__(self, config: LiveStrategyConfig):
+        print("[LiveStrategy] Init start...")
         super().__init__(config)
+        print("[LiveStrategy] Super init done")
         self.cfg = config
         self._instrument_id = InstrumentId.from_str(config.instrument_id)
         self._venue = Venue("BINANCE")
+        print(f"[LiveStrategy] IDs created: {self._instrument_id}")
 
         # ── Nautilus built-in indicators ──
+        print("[LiveStrategy] Creating indicators...")
         self.ema_fast   = ExponentialMovingAverage(config.ema_fast)
         self.ema_medium = ExponentialMovingAverage(config.ema_medium)
         self.ema_trend  = ExponentialMovingAverage(config.ema_trend)
         self.rsi        = RelativeStrengthIndex(config.rsi_period)
         self.atr        = AverageTrueRange(config.atr_period)
         self.bb         = BollingerBands(config.bb_period, config.bb_std)
+        print("[LiveStrategy] Indicators created")
 
         # ── Custom data buffers (ใช้กับ VWAP, RVOL, squeeze, regime, sweep) ──
         max_buf = (max(config.ema_trend, config.bb_period, config.atr_period,

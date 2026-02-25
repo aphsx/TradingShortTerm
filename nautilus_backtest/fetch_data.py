@@ -60,6 +60,8 @@ def parse_args():
     parser.add_argument("--trades-only", action="store_true", help="ดึงเฉพาะ TradeTick (aggTrades)")
     parser.add_argument("--bars-only",   action="store_true", help="ดึงเฉพาะ Bar (OHLCV klines)")
     parser.add_argument("--force",       action="store_true", help="ลบข้อมูลเก่าทั้งหมดก่อน write ใหม่")
+    parser.add_argument("--max-trades",  type=int, default=500_000,
+                        help="จำกัดจำนวน TradeTick ที่ดึง (default=500000, 0=ไม่จำกัด)")
     return parser.parse_args()
 
 
@@ -199,7 +201,8 @@ def fetch_bars(symbol: str, days: int, interval: str,
 # ---------------------------------------------------------------------------
 # TradeTick (aggTrades) — ข้อมูลตลาดจริงทุก trade
 # ---------------------------------------------------------------------------
-def fetch_binance_agg_trades(symbol: str, start_ms: int, end_ms: int) -> list:
+def fetch_binance_agg_trades(symbol: str, start_ms: int, end_ms: int,
+                             max_trades: int = 500_000) -> list:
     """
     ดึง aggTrades จาก Binance Futures API
     Pagination ด้วย fromId เพื่อป้องกันการข้ามข้อมูลใน ms เดียวกัน
@@ -210,9 +213,10 @@ def fetch_binance_agg_trades(symbol: str, start_ms: int, end_ms: int) -> list:
     """
     all_trades = []
     from_id = None
+    limit_str = f"{max_trades:,}" if max_trades > 0 else "ไม่จำกัด"
 
-    print(f"  Fetching {symbol} aggTrades from Binance Futures...")
-    print(f"  (อาจใช้เวลานานสำหรับข้อมูลหลายวัน — BTC ~200k-500k trades/วัน)")
+    print(f"  Fetching {symbol} aggTrades from Binance Futures... (limit={limit_str})")
+    print(f"  (BTC ~200k-500k trades/วัน)")
 
     while True:
         if from_id is None:
@@ -279,7 +283,12 @@ def fetch_binance_agg_trades(symbol: str, start_ms: int, end_ms: int) -> list:
         # ต่อ batch ถัดไปจาก aggTradeId สุดท้าย + 1
         from_id = last_trade["a"] + 1
 
-        time.sleep(0.2)  # rate limit: ป้องกัน 429 (0.2s = ~5 req/s ปลอดภัยกว่า)
+        # หยุดถ้าถึง max_trades
+        if max_trades > 0 and len(all_trades) >= max_trades:
+            print(f"\n    [Limit] ถึง max_trades={max_trades:,} แล้ว หยุดดึง")
+            break
+
+        time.sleep(0.05)  # rate limit: ป้องกัน 429
 
     print()
     return all_trades
@@ -318,7 +327,8 @@ def agg_trades_to_ticks(
 
 
 def fetch_trades(symbol: str, days: int,
-                 catalog: ParquetDataCatalog, instrument: CryptoPerpetual):
+                 catalog: ParquetDataCatalog, instrument: CryptoPerpetual,
+                 max_trades: int = 500_000):
     now_ms   = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
     start_ms = now_ms - (days * 24 * 60 * 60 * 1000)
 
@@ -328,7 +338,7 @@ def fetch_trades(symbol: str, days: int,
         print(f"\n[!] ลบข้อมูล TradeTick เก่าใน catalog...")
         shutil.rmtree(tick_data_dir)
 
-    raw = fetch_binance_agg_trades(symbol, start_ms, now_ms)
+    raw = fetch_binance_agg_trades(symbol, start_ms, now_ms, max_trades=max_trades)
     print(f"    Total aggTrades: {len(raw):,}")
     if not raw:
         return
@@ -352,7 +362,8 @@ def fetch_trades(symbol: str, days: int,
 # Main
 # ---------------------------------------------------------------------------
 def fetch(symbol: str = "BTCUSDT", days: int = 30, interval: str = "1m",
-          trades_only: bool = False, bars_only: bool = False):
+          trades_only: bool = False, bars_only: bool = False,
+          max_trades: int = 500_000):
 
     print("=" * 64)
     print("  Nautilus Data Fetcher")
@@ -372,7 +383,7 @@ def fetch(symbol: str = "BTCUSDT", days: int = 30, interval: str = "1m",
 
     if do_trades:
         print(f"\n[2] TradeTick (aggTrades) — ข้อมูลตลาดจริง")
-        fetch_trades(symbol, days, catalog, instr)
+        fetch_trades(symbol, days, catalog, instr, max_trades=max_trades)
 
     if do_bars:
         print(f"\n[3] Bar (OHLCV klines) — {interval}")
@@ -400,4 +411,5 @@ if __name__ == "__main__":
         interval=args.interval,
         trades_only=args.trades_only,
         bars_only=args.bars_only,
+        max_trades=args.max_trades,
     )

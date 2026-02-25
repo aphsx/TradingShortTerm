@@ -105,7 +105,7 @@ def make_config(
     # General
     warmup_bars: int = 80,
     initial_balance: float = DEFAULT_BALANCE,
-    run_id: str = "LIVE-DEFAULT",
+    run_id: str = "BACKTEST-001",
 ) -> BacktestRunConfig:
 
     return BacktestRunConfig(
@@ -256,7 +256,12 @@ def save_reports(node: BacktestNode, results: list) -> None:
 
     REPORTS_DIR.mkdir(exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    engines = node.get_engines()
+    
+    # ดึง engines ที่รันสำเร็จออกมา
+    try:
+        engines = node.get_engines()
+    except Exception:
+        engines = []
 
     for i, result in enumerate(results):
         run_id = (result.run_config_id or f"run_{i + 1}")[:20]
@@ -339,7 +344,7 @@ def run():
     if SWEEP_MODE:
         configs = make_full_sweep() if FULL_SWEEP else make_quick_sweep()
     else:
-        configs = [make_config(run_id="LIVE-SINGLE")]
+        configs = [make_config(run_id="BACKTEST-SINGLE")]
 
     print(f"  Configs   : {len(configs)}")
     print(f"\n  Running {len(configs)} backtest(s)...\n")
