@@ -5,7 +5,16 @@ running 50-100x faster via JIT compilation.
 """
 
 import numpy as np
-from numba import njit
+
+try:
+    from numba import njit
+except ImportError:
+    # Fallback when numba is not installed (e.g. backtest environment).
+    # Same algorithms, no JIT — correct results, slower speed.
+    def njit(*args, **kwargs):  # type: ignore[misc]
+        def decorator(fn):
+            return fn
+        return decorator if args and callable(args[0]) is False else decorator(args[0]) if args else decorator
 
 
 @njit(cache=True)
