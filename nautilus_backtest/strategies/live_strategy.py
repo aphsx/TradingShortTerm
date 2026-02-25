@@ -592,7 +592,7 @@ class LiveStrategy(Strategy):
                           and ema_f < ema_m)
 
         if mode in ("breakout", "hybrid"):
-            if is_sq:
+            if self._was_squeezed:
                 if bias_long and close > bb_u:
                     if had_cross_up or ema_f > ema_m:
                         return SignalType.BREAKOUT_LONG
