@@ -26,7 +26,7 @@ from nautilus_trader.config import (
     ImportableStrategyConfig,
     LoggingConfig,
 )
-from nautilus_trader.model.data import Bar, BarType, TradeTick
+from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.enums import AccountType, OmsType
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
@@ -66,7 +66,7 @@ def make_config(
     vwap_period: int = 20,
     rsi_long_min: float = 45.0, rsi_long_max: float = 68.0,
     rsi_short_min: float = 32.0, rsi_short_max: float = 55.0,
-    rvol_threshold: float = 1.3,
+    rvol_threshold: float = 0.0,  # VALUE bars have near-constant BTC qty per bar (~$50k/price)
     min_ema_spread_pct: float = 0.0005, min_atr_pct: float = 0.001,
     entry_mode: str = _DEFAULT_MODE,
     risk_per_trade_pct: float = 0.01,
@@ -99,12 +99,11 @@ def make_config(
                 data_cls=TradeTick,
                 instrument_id=InstrumentId.from_str(INSTRUMENT_ID_STR),
             ),
-            BacktestDataConfig(
-                catalog_path=str(CATALOG_PATH),
-                data_cls=Bar,
-                instrument_id=InstrumentId.from_str(INSTRUMENT_ID_STR),
-                bar_types=[VALUE_BAR_TYPE],
-            )
+            # NOTE: VALUE-LAST-INTERNAL bars are NOT loaded from catalog.
+            # They are aggregated on-the-fly from TradeTick data by the BacktestEngine
+            # when the strategy calls subscribe_bars() in on_start().
+            # Adding a BacktestDataConfig for them would return 0 bars (they don't
+            # exist in catalog) and prevents the internal aggregator from being set up.
         ],
         engine=BacktestEngineConfig(
             trader_id=run_id,
