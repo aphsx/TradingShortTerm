@@ -23,7 +23,6 @@ from nautilus_trader.config import (
     BacktestEngineConfig,
     BacktestRunConfig,
     BacktestVenueConfig,
-    BarAggregatorConfig,
     ImportableStrategyConfig,
     LoggingConfig,
 )
@@ -85,7 +84,6 @@ def make_config(
 
     return BacktestRunConfig(
         dispose_on_completion=False,
-        instruments=instruments,
         venues=[
             BacktestVenueConfig(
                 name=VENUE_NAME,
@@ -100,13 +98,11 @@ def make_config(
                 catalog_path=str(CATALOG_PATH),
                 data_cls=TradeTick,
                 instrument_id=InstrumentId.from_str(INSTRUMENT_ID_STR),
+                bar_types=[VALUE_BAR_TYPE],
             )
         ],
         engine=BacktestEngineConfig(
             trader_id=run_id,
-            bar_aggregators=[
-                BarAggregatorConfig(bar_type=BarType.from_str(VALUE_BAR_TYPE))
-            ],
             strategies=[
                 ImportableStrategyConfig(
                     strategy_path="strategy:LiveStrategy",
