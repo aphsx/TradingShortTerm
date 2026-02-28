@@ -15,24 +15,33 @@
 
 ---
 
-## Current Codebase Analysis
+## 🏆 1. Current System Status (As of 2026-02-28)
+
+ระบบได้ขยับจาก Draft Blueprint มาเป็นระบบที่ใช้งานได้จริง (Functional Alpha) โดยมีรายละเอียดดังนี้:
 
 ```
 TradingShortTerm/
-├── nautilus_backtest/          ← Python backtesting (WORKING)
-│   ├── strategies/ams_scalper.py   ← AMS Scalper v2 (692 lines)
-│   ├── run_node.py                 ← BacktestNode runner + sweep
-│   └── fetch_data.py              ← Binance klines → Parquet catalog
-├── mft_engine/                ← Rust engine (SKELETON, ~5KB stubs)
-│   └── src/{engine,strategy,risk,executor,data,models}.rs
-└── .env                       ← Binance testnet credentials
+├── live_engine/                 # ⚡ Production-ready Live Engine
+│   ├── main.py                  # Live Orchestrator (WebSocket, Queue, Risk)
+│   ├── signal_engine.py         # Signal generation (Volume Bars, Regime Detection)
+│   ├── oms.py                   # Order Management System (State machine, Rate limits)
+│   ├── risk.py                  # Risk Engine & Circuit Breakers 
+│   ├── indicators.py            # Optimized indicators (NumPy, Numba ready)
+│   └── ws_manager.py            # Async WebSocket (Market Data + User Data)
+│
+├── nautilus_backtest/           # 📊 High-fidelity Backtester (Nautilus Trader)
+│   ├── run_node.py              # Performance sweep runner
+│   └── strategies/ams_scalper.py # AMS Scalper Strategy v2 (Stable)
 ```
 
-**Key Observations:**
-- `ams_scalper.py` is a **backtest-only** strategy (Nautilus Trader). It uses `deque` buffers + NumPy indicators. No live WebSocket, no OMS, no rate limiting.
-- `mft_engine/` Rust crate has placeholder structs with `DashMap`, `tokio`, `Polars` deps but zero real logic.
-- **Gap to Production:** Need WebSocket ingestion, state-machine OMS, risk engine, and live execution layer.
+**✅ Key Milestones Achieved:**
+- **Live WebSocket Support**: ย้ายจาก Static Klines มาเป็น Real-time Streaming (Market/User).
+- **Volume Bar Aggregation**: ระบบไม่ใช้ Time-based bar (1m) แต่ใช้ Volume-based bars เพื่อลด noise.
+- **OMS Implementation**: มี Managed Order state machine และ Rate limit manager เพื่อกัน IP Ban.
+- **Circuit Breaker System**: ระบบคุมความเสี่ยงทำงานแบบ Dynamic (หยุดพัก/ลด size แบบอัตโนมัติ).
+- **NumPy Integration**: คำนวณรวดเร็วบน NumPy arrays (Numba cacheable).
 
+---
 ---
 
 ## 1. System Architecture & Python Optimization {#1-system-architecture}

@@ -82,19 +82,20 @@
 
 ```
 TradingShortTerm/
-├── nautilus_backtest/
-│   ├── fetch_data.py            # ดึงข้อมูลจาก Binance API
-│   ├── run_node.py              # รัน Backtest (AMS/MFT)
-│   ├── strategies/
-│   │   ├── ams_scalper.py       # 🆕 AMS Scalper Strategy
-│   │   ├── mft_strategy.py      # MFT Strategy (legacy)
-│   │   └── __init__.py
-│   ├── catalog/                 # Parquet Data Catalog
-│   └── requirements.txt
+├── live_engine/                 # ⚡ Live Trading Engine (Alpha)
+│   ├── main.py                  # Orchestrator & Entrypoint
+│   ├── signal_engine.py         # Signal generation (shared with backtest)
+│   ├── oms.py                   # Order Management System
+│   └── risk.py                  # Circuit Breakers & Risk Control
 │
-├── mft_engine/                  # Rust Engine (Development)
-├── .env
-├── .gitignore
+├── nautilus_backtest/           # 📊 Backtest System (Nautilus Trader)
+│   ├── run.py                   # Backtest runner (SINGLE)
+│   ├── fetch.py                 # Fetch crypto tick/bar data
+│   ├── strategy.py              # Nautilus adapter for Live Engine
+│   └── catalog/                 # Parquet Data Catalog
+│
+├── docs/                        # Technical documentation
+├── .env                         # API Keys (Binance Testnet)
 └── README.md
 ```
 
@@ -105,38 +106,21 @@ TradingShortTerm/
 ### 1. ติดตั้ง
 
 ```bash
-cd nautilus_backtest
 pip install -r requirements.txt
 ```
 
 ### 2. ดึงข้อมูล
 
 ```bash
-python nautilus_backtest/fetch_data.py --days 30
+cd nautilus_backtest
+python fetch.py --days 30
 ```
 
 ### 3. รัน Backtest
 
-#### AMS Scalper (แนะนำ)
-
 ```bash
-# Single run — AMS Scalper defaults
-python nautilus_backtest/run_node.py
-
-# Quick sweep — เปรียบเทียบ 5 configs
-python nautilus_backtest/run_node.py --sweep
-
-# Full sweep — เทสต์ทั้งหมด 20+ configs
-python nautilus_backtest/run_node.py --sweep --full
-
-# Override balance
-python nautilus_backtest/run_node.py --balance 5000
-```
-
-#### Legacy MFT (เปรียบเทียบ)
-
-```bash
-python nautilus_backtest/run_node.py --legacy
+cd nautilus_backtest
+python run.py --balance 5000
 ```
 
 ---
