@@ -30,7 +30,7 @@ from dataclasses import dataclass
 import requests
 
 from nautilus_trader.model.currencies import USDT
-from nautilus_trader.model.data import Bar, BarType, TradeTick, GenericData, DataType
+from nautilus_trader.model.data import Bar, BarType, TradeTick, CustomData, DataType
 from nautilus_trader.model.enums import AggressorSide
 from nautilus_trader.model.identifiers import InstrumentId, TradeId
 from nautilus_trader.model.instruments import CryptoPerpetual
@@ -367,9 +367,9 @@ def fetch_bars(
 def rows_to_book_depth(
     rows: list[list[str]],
     instrument: CryptoPerpetual,
-) -> list[GenericData]:
+) -> list[CustomData]:
     iid_str = str(instrument.id)
-    results: list[GenericData] = []
+    results: list[CustomData] = []
     data_type = DataType(BookDepthData)
 
     for row in rows:
@@ -389,7 +389,7 @@ def rows_to_book_depth(
                 ts_event=ts_ns,
                 ts_init=ts_ns,
             )
-            results.append(GenericData(data_type=data_type, data=item))
+            results.append(CustomData(data_type=data_type, data=item))
         except (ValueError, IndexError):
             continue
 
@@ -436,9 +436,9 @@ def fetch_book_depth(
 def rows_to_metrics(
     rows: list[list[str]],
     instrument: CryptoPerpetual,
-) -> list[GenericData]:
+) -> list[CustomData]:
     iid_str = str(instrument.id)
-    results: list[GenericData] = []
+    results: list[CustomData] = []
     data_type = DataType(MarketMetrics)
 
     for row in rows:
@@ -463,7 +463,7 @@ def rows_to_metrics(
                 ts_event=ts_ns,
                 ts_init=ts_ns,
             )
-            results.append(GenericData(data_type=data_type, data=item))
+            results.append(CustomData(data_type=data_type, data=item))
         except (ValueError, IndexError):
             continue
 

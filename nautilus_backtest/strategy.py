@@ -37,7 +37,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from nautilus_trader.config import StrategyConfig
-from nautilus_trader.model.data import Bar, BarType, TradeTick, GenericData
+from nautilus_trader.model.data import Bar, BarType, TradeTick, CustomData
 from nautilus_trader.model.enums import AggressorSide, OrderSide
 from nautilus_trader.model.identifiers import InstrumentId, Venue
 from nautilus_trader.model.objects import Currency, Price, Quantity
@@ -353,7 +353,7 @@ class MultiAssetStrategy(Strategy):
         # User-defined bar logic (entry/exit signals)
         self.on_bar_logic(bar, bar.bar_type, state)
 
-    def on_data(self, data: GenericData) -> None:
+    def on_data(self, data: CustomData) -> None:
         """
         Route custom data (BookDepthData / MarketMetrics) to correct state.
         Updates state fields automatically before calling on_custom_data_logic().
@@ -443,7 +443,7 @@ class MultiAssetStrategy(Strategy):
 
     def on_custom_data_logic(
         self,
-        data: GenericData,
+        data: CustomData,
         state: InstrumentState,
     ) -> None:
         """
@@ -454,7 +454,7 @@ class MultiAssetStrategy(Strategy):
           - state.open_interest, state.taker_buy_sell_ratio, etc. (from MarketMetrics)
 
         Args:
-            data  : the GenericData object (access data.data for raw values)
+            data  : the CustomData object (access data.data for raw values)
             state : this instrument's mutable state
 
         Example:

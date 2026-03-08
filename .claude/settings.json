@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(curl -s --head \"https://data.binance.vision/data/futures/um/daily/bookTicker/SOLUSDT/SOLUSDT-bookTicker-2026-02-27.zip\")"
+    ]
+  }
+}

@@ -82,8 +82,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--balance",
         type=float,
-        default=float(os.getenv("BACKTEST_INITIAL_BALANCE", "10000.0")),
-        help="Starting USDT balance (default: 10000)",
+        default=float(os.getenv("BACKTEST_INITIAL_BALANCE", "1000.0")),
+        help="Starting USDT balance (default: 1000)",
     )
     p.add_argument(
         "--bar-value",
