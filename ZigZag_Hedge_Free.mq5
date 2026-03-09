@@ -1,13 +1,14 @@
 ﻿//+------------------------------------------------------------------+
-//| ZigZag_Hedge_2Levels_Fixed_AddOrMul_V8.mq5                       |
+//| ZigZag_Hedge_2Levels_Fixed_AddOrMul_V9.mq5                       |
 //| Start BUY market, then alternate SELL STOP / BUY STOP            |
 //| between 2 fixed levels (Upper/Lower) with lot progression.       |
 //| Lot progression: ADD (fixed step) or MULTIPLY                    |
 //| Fix: prevent duplicate pendings + safe position loop + deal guard|
 //| + Fix: Market-Closed guard + retry close/pending when reopened   |
+//| V9: ATR Dual Mode + Trailing Stop + Martingale Consolidation     |
 //+------------------------------------------------------------------+
 #property copyright "OpenAI"
-#property version   "1.08"
+#property version   "1.09"
 #property strict
 
 #include <Trade/Trade.mqh>
@@ -54,7 +55,7 @@ input int      InpSL_Points            = 0;          // StopLoss points for each
 // Trade settings
 input ulong    InpMagic                = 20260210;   // Magic number
 input int      InpSlippagePoints       = 20;         // Slippage (points)
-input string   InpComment              = "ZZH2L_V8"; // Order comment
+input string   InpComment              = "ZZH2L_V9"; // Order comment
 input bool     InpOnePendingOnly       = true;       // Keep only 1 pending opposite at a time
 
 // Recovery / Persistence
@@ -241,6 +242,8 @@ void ResetSequenceStateIfFlat(const string reason)
    gPendingCloseAll = false;
    gPausedByMaxLot = false;
    gPausedBySideway = false;
+   gMartiActive = false;
+   gMartiTicket = 0;
 
    SaveState();
 
@@ -1211,53 +1214,106 @@ bool PlaceOppositeStop(ZZ_SIDE lastSide, double lots)
    int stopsLevel = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
    double minDist = stopsLevel * _Point;
 
+   int    digits   = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   bool   sideways = IsSidewaysDualMode();
+
    if(lastSide == SIDE_BUY)
    {
-      ulong t=0; double p=0;
-      if(PendingExists(ORDER_TYPE_SELL_STOP, t, p)) return true;
-
-      double price = gLowerPrice;
-      if(InpFollowPriceForPending)
+      if(!sideways)
       {
-         price = DesiredOppositePendingPrice(SIDE_BUY);
-         if(price > 0.0)
+         // Normal mode: SELL STOP below
+         ulong t=0; double p=0;
+         if(PendingExists(ORDER_TYPE_SELL_STOP, t, p)) return true;
+
+         double price = gLowerPrice;
+         if(InpFollowPriceForPending)
          {
-            gLowerPrice = price;
-            gUpperPrice = NormalizeDouble(PriceByPoints(gLowerPrice, InpStepPoints, true), (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
+            price = DesiredOppositePendingPrice(SIDE_BUY);
+            if(price > 0.0)
+            {
+               gLowerPrice = price;
+               gUpperPrice = NormalizeDouble(PriceByPoints(gLowerPrice, InpStepPoints, true), digits);
+            }
          }
+         if((bid - price) < minDist)
+            price = bid - (minDist + 2*_Point);
+         price = NormalizeDouble(price, digits);
+         bool ok = trade.SellStop(lots, price, _Symbol, 0.0, 0.0, ORDER_TIME_GTC, 0, InpComment);
+         if(InpDebugPrint && !ok) Print("SellStop failed retcode=", trade.ResultRetcode(), " desc=", trade.ResultRetcodeDescription(), " err=", GetLastError());
+         return ok;
       }
+      else
+      {
+         // Sideways mode: BUY STOP above (accumulate both sides in range)
+         ulong t=0; double p=0;
+         if(PendingExists(ORDER_TYPE_BUY_STOP, t, p)) return true;
 
-      if((bid - price) < minDist)
-         price = bid - (minDist + 2*_Point);
-
-      price = NormalizeDouble(price, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
-      bool ok = trade.SellStop(lots, price, _Symbol, 0.0, 0.0, ORDER_TIME_GTC, 0, InpComment);
-      if(InpDebugPrint && !ok) Print("SellStop failed retcode=", trade.ResultRetcode(), " desc=", trade.ResultRetcodeDescription(), " err=", GetLastError());
-      return ok;
+         double price = gUpperPrice;
+         if(InpFollowPriceForPending)
+         {
+            price = DesiredOppositePendingPrice(SIDE_SELL);
+            if(price > 0.0)
+            {
+               gUpperPrice = price;
+               gLowerPrice = NormalizeDouble(PriceByPoints(gUpperPrice, InpStepPoints, false), digits);
+            }
+         }
+         if((price - ask) < minDist)
+            price = ask + (minDist + 2*_Point);
+         price = NormalizeDouble(price, digits);
+         bool ok = trade.BuyStop(lots, price, _Symbol, 0.0, 0.0, ORDER_TIME_GTC, 0, InpComment);
+         if(InpDebugPrint && !ok) Print("BuyStop(sideways) failed retcode=", trade.ResultRetcode(), " desc=", trade.ResultRetcodeDescription(), " err=", GetLastError());
+         return ok;
+      }
    }
    else if(lastSide == SIDE_SELL)
    {
-      ulong t=0; double p=0;
-      if(PendingExists(ORDER_TYPE_BUY_STOP, t, p)) return true;
-
-      double price = gUpperPrice;
-      if(InpFollowPriceForPending)
+      if(!sideways)
       {
-         price = DesiredOppositePendingPrice(SIDE_SELL);
-         if(price > 0.0)
+         // Normal mode: BUY STOP above
+         ulong t=0; double p=0;
+         if(PendingExists(ORDER_TYPE_BUY_STOP, t, p)) return true;
+
+         double price = gUpperPrice;
+         if(InpFollowPriceForPending)
          {
-            gUpperPrice = price;
-            gLowerPrice = NormalizeDouble(PriceByPoints(gUpperPrice, InpStepPoints, false), (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
+            price = DesiredOppositePendingPrice(SIDE_SELL);
+            if(price > 0.0)
+            {
+               gUpperPrice = price;
+               gLowerPrice = NormalizeDouble(PriceByPoints(gUpperPrice, InpStepPoints, false), digits);
+            }
          }
+         if((price - ask) < minDist)
+            price = ask + (minDist + 2*_Point);
+         price = NormalizeDouble(price, digits);
+         bool ok = trade.BuyStop(lots, price, _Symbol, 0.0, 0.0, ORDER_TIME_GTC, 0, InpComment);
+         if(InpDebugPrint && !ok) Print("BuyStop failed retcode=", trade.ResultRetcode(), " desc=", trade.ResultRetcodeDescription(), " err=", GetLastError());
+         return ok;
       }
+      else
+      {
+         // Sideways mode: SELL STOP below (accumulate both sides in range)
+         ulong t=0; double p=0;
+         if(PendingExists(ORDER_TYPE_SELL_STOP, t, p)) return true;
 
-      if((price - ask) < minDist)
-         price = ask + (minDist + 2*_Point);
-
-      price = NormalizeDouble(price, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
-      bool ok = trade.BuyStop(lots, price, _Symbol, 0.0, 0.0, ORDER_TIME_GTC, 0, InpComment);
-      if(InpDebugPrint && !ok) Print("BuyStop failed retcode=", trade.ResultRetcode(), " desc=", trade.ResultRetcodeDescription(), " err=", GetLastError());
-      return ok;
+         double price = gLowerPrice;
+         if(InpFollowPriceForPending)
+         {
+            price = DesiredOppositePendingPrice(SIDE_BUY);
+            if(price > 0.0)
+            {
+               gLowerPrice = price;
+               gUpperPrice = NormalizeDouble(PriceByPoints(gLowerPrice, InpStepPoints, true), digits);
+            }
+         }
+         if((bid - price) < minDist)
+            price = bid - (minDist + 2*_Point);
+         price = NormalizeDouble(price, digits);
+         bool ok = trade.SellStop(lots, price, _Symbol, 0.0, 0.0, ORDER_TIME_GTC, 0, InpComment);
+         if(InpDebugPrint && !ok) Print("SellStop(sideways) failed retcode=", trade.ResultRetcode(), " desc=", trade.ResultRetcodeDescription(), " err=", GetLastError());
+         return ok;
+      }
    }
    return false;
 }
@@ -1368,6 +1424,9 @@ void MaintainOppositePending()
       return;
    }
 
+   // Suppress new grid legs during active consolidation
+   if(gMartiActive) return;
+
    if(InpTxnCooldownMs > 0)
    {
       ulong now = (ulong)GetTickCount();
@@ -1383,53 +1442,114 @@ void MaintainOppositePending()
    bool hasBuyStop  = PendingExists(ORDER_TYPE_BUY_STOP,  buyT,  buyP);
    bool hasSellStop = PendingExists(ORDER_TYPE_SELL_STOP, sellT, sellP);
 
+   bool sideways = IsSidewaysDualMode();
+   int  digits   = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+
    if(gLastTriggered == SIDE_BUY)
    {
-      if(hasBuyStop) trade.OrderDelete(buyT);
-      hasSellStop = PendingExists(ORDER_TYPE_SELL_STOP, sellT, sellP);
-      if(InpFollowPriceForPending && ShouldRepricePendingNow())
+      if(!sideways)
       {
-         double want = DesiredOppositePendingPrice(SIDE_BUY);
-         if(want > 0.0)
+         // Normal: want SELL STOP below — remove any stray BUY STOP
+         if(hasBuyStop) trade.OrderDelete(buyT);
+         hasSellStop = PendingExists(ORDER_TYPE_SELL_STOP, sellT, sellP);
+         if(InpFollowPriceForPending && ShouldRepricePendingNow())
          {
-            int thr = PendingRepriceThresholdPts();
-            double diffPts = (hasSellStop ? (MathAbs(sellP - want) / _Point) : (double)(thr + 1));
-            if(!hasSellStop || diffPts >= (double)thr)
+            double want = DesiredOppositePendingPrice(SIDE_BUY);
+            if(want > 0.0)
             {
-               if(hasSellStop) trade.OrderDelete(sellT);
-               gLowerPrice = want;
-               gUpperPrice = NormalizeDouble(PriceByPoints(gLowerPrice, InpStepPoints, true), (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
-               PlaceOppositeStop(SIDE_BUY, gNextLot);
-               SaveState();
-               return;
+               int thr = PendingRepriceThresholdPts();
+               double diffPts = (hasSellStop ? (MathAbs(sellP - want) / _Point) : (double)(thr + 1));
+               if(!hasSellStop || diffPts >= (double)thr)
+               {
+                  if(hasSellStop) trade.OrderDelete(sellT);
+                  gLowerPrice = want;
+                  gUpperPrice = NormalizeDouble(PriceByPoints(gLowerPrice, InpStepPoints, true), digits);
+                  PlaceOppositeStop(SIDE_BUY, gNextLot);
+                  SaveState();
+                  return;
+               }
             }
          }
+         if(!hasSellStop) PlaceOppositeStop(SIDE_BUY, gNextLot);
       }
-      if(!hasSellStop) PlaceOppositeStop(SIDE_BUY, gNextLot);
+      else
+      {
+         // Sideways: want BUY STOP above — remove any stray SELL STOP
+         if(hasSellStop) trade.OrderDelete(sellT);
+         hasBuyStop = PendingExists(ORDER_TYPE_BUY_STOP, buyT, buyP);
+         if(InpFollowPriceForPending && ShouldRepricePendingNow())
+         {
+            double want = DesiredOppositePendingPrice(SIDE_SELL); // above ask
+            if(want > 0.0)
+            {
+               int thr = PendingRepriceThresholdPts();
+               double diffPts = (hasBuyStop ? (MathAbs(buyP - want) / _Point) : (double)(thr + 1));
+               if(!hasBuyStop || diffPts >= (double)thr)
+               {
+                  if(hasBuyStop) trade.OrderDelete(buyT);
+                  gUpperPrice = want;
+                  gLowerPrice = NormalizeDouble(PriceByPoints(gUpperPrice, InpStepPoints, false), digits);
+                  PlaceOppositeStop(SIDE_BUY, gNextLot);
+                  SaveState();
+                  return;
+               }
+            }
+         }
+         if(!hasBuyStop) PlaceOppositeStop(SIDE_BUY, gNextLot);
+      }
    }
    else if(gLastTriggered == SIDE_SELL)
    {
-      if(hasSellStop) trade.OrderDelete(sellT);
-      hasBuyStop = PendingExists(ORDER_TYPE_BUY_STOP, buyT, buyP);
-      if(InpFollowPriceForPending && ShouldRepricePendingNow())
+      if(!sideways)
       {
-         double want = DesiredOppositePendingPrice(SIDE_SELL);
-         if(want > 0.0)
+         // Normal: want BUY STOP above — remove any stray SELL STOP
+         if(hasSellStop) trade.OrderDelete(sellT);
+         hasBuyStop = PendingExists(ORDER_TYPE_BUY_STOP, buyT, buyP);
+         if(InpFollowPriceForPending && ShouldRepricePendingNow())
          {
-            int thr = PendingRepriceThresholdPts();
-            double diffPts = (hasBuyStop ? (MathAbs(buyP - want) / _Point) : (double)(thr + 1));
-            if(!hasBuyStop || diffPts >= (double)thr)
+            double want = DesiredOppositePendingPrice(SIDE_SELL);
+            if(want > 0.0)
             {
-               if(hasBuyStop) trade.OrderDelete(buyT);
-               gUpperPrice = want;
-               gLowerPrice = NormalizeDouble(PriceByPoints(gUpperPrice, InpStepPoints, false), (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
-               PlaceOppositeStop(SIDE_SELL, gNextLot);
-               SaveState();
-               return;
+               int thr = PendingRepriceThresholdPts();
+               double diffPts = (hasBuyStop ? (MathAbs(buyP - want) / _Point) : (double)(thr + 1));
+               if(!hasBuyStop || diffPts >= (double)thr)
+               {
+                  if(hasBuyStop) trade.OrderDelete(buyT);
+                  gUpperPrice = want;
+                  gLowerPrice = NormalizeDouble(PriceByPoints(gUpperPrice, InpStepPoints, false), digits);
+                  PlaceOppositeStop(SIDE_SELL, gNextLot);
+                  SaveState();
+                  return;
+               }
             }
          }
+         if(!hasBuyStop) PlaceOppositeStop(SIDE_SELL, gNextLot);
       }
-      if(!hasBuyStop) PlaceOppositeStop(SIDE_SELL, gNextLot);
+      else
+      {
+         // Sideways: want SELL STOP below — remove any stray BUY STOP
+         if(hasBuyStop) trade.OrderDelete(buyT);
+         hasSellStop = PendingExists(ORDER_TYPE_SELL_STOP, sellT, sellP);
+         if(InpFollowPriceForPending && ShouldRepricePendingNow())
+         {
+            double want = DesiredOppositePendingPrice(SIDE_BUY); // below bid
+            if(want > 0.0)
+            {
+               int thr = PendingRepriceThresholdPts();
+               double diffPts = (hasSellStop ? (MathAbs(sellP - want) / _Point) : (double)(thr + 1));
+               if(!hasSellStop || diffPts >= (double)thr)
+               {
+                  if(hasSellStop) trade.OrderDelete(sellT);
+                  gLowerPrice = want;
+                  gUpperPrice = NormalizeDouble(PriceByPoints(gLowerPrice, InpStepPoints, true), digits);
+                  PlaceOppositeStop(SIDE_SELL, gNextLot);
+                  SaveState();
+                  return;
+               }
+            }
+         }
+         if(!hasSellStop) PlaceOppositeStop(SIDE_SELL, gNextLot);
+      }
    }
 }
 
@@ -1693,6 +1813,12 @@ void OnDeinit(const int reason)
       IndicatorRelease(gAtrHandle);
       gAtrHandle = INVALID_HANDLE;
    }
+
+   if(gAtrDualHandle != INVALID_HANDLE)
+   {
+      IndicatorRelease(gAtrDualHandle);
+      gAtrDualHandle = INVALID_HANDLE;
+   }
 }
 
 void OnTimer()
@@ -1731,7 +1857,11 @@ void OnTimer()
 
    // ถ้าตลาดเปิดอยู่ ก็รักษา pending ไว้ให้ครบ (บางที OnTick เงียบ)
    if(IsTradeAllowedNow())
+   {
       MaintainOppositePending();
+      UpdateTrailingStops();
+      CheckMartingaleConsolidation();
+   }
 }
 
 void OnTick()
@@ -1767,6 +1897,8 @@ void OnTick()
    CheckProfitLossCloseAll();
    if(!gStarted) return;
 
+   UpdateTrailingStops();
+   CheckMartingaleConsolidation();
    MaintainOppositePending();
 }
 
