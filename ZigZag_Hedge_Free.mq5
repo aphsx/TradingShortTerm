@@ -76,6 +76,18 @@ input bool     InpFollowPriceForPending = false;     // If true, opposite pendin
 input bool     InpRepricePendingOnNewBar = true;     // Throttle reprice to once per bar (PERIOD_CURRENT)
 input int      InpPendingRepriceThresholdPoints = 0; // Reprice if pending differs by this many points (0=auto: Step/5, min 10)
 
+// ATR Dual Mode — auto switch LOT_MUL (trend) / LOT_ADD (sideways)
+input int      InpATRDualPeriod        = 14;         // ATR period for dual mode (0 = disable dual mode)
+input double   InpATRTrendThreshold    = 0.0;        // ATR (points) > this => trend (LOT_MUL, normal dir); <= => sideways (LOT_ADD, reversed dir). 0=disable
+
+// Trailing Stop — active when in LOT_ADD mode and only ONE side has positions
+input int      InpTrailPoints          = 0;          // Trailing stop distance in points (0 = disable)
+input int      InpTrailStepPoints      = 0;          // Minimum price move to update trail (0 = every tick)
+
+// Martingale Consolidation — active when in LOT_ADD mode and BOTH sides have positions
+input double   InpMartiProfit          = 0.0;        // Close-all profit target for consolidation ($, 0 = use InpProfitTargetMoney)
+input int      InpMartiMagic           = 0;          // Separate magic for consolidation order (0 = use InpMagic+1)
+
 //------------------------- STATE -----------------------------------
 enum ZZ_SIDE { SIDE_NONE=0, SIDE_BUY=1, SIDE_SELL=2 };
 
@@ -108,6 +120,19 @@ bool     gPausedByMaxLot   = false;
 
 // Pending reprice throttle
 datetime gLastPendingRepriceBarTime = 0;
+
+//------------------------- ATR Dual Mode state ---------------------
+int      gAtrDualHandle    = INVALID_HANDLE;   // separate handle for dual-mode ATR
+bool     gDualModeTrend    = true;             // true=LOT_MUL trend mode, false=LOT_ADD sideways mode
+datetime gLastDualAtrBar   = 0;
+
+//------------------------- Trailing Stop state ---------------------
+// key: position ticket, value: highest/lowest favorable price seen so far
+// (we use a simple linear scan instead of a hashmap for MQL5 compatibility)
+
+//------------------------- Martingale Consolidation state ----------
+bool     gMartiActive      = false;  // consolidation round is open
+ulong    gMartiTicket      = 0;      // ticket of the consolidation position
 
 //------------------------- UTIL ------------------------------------
 void DPrint(const string msg){ if(InpDebugPrint) Print(msg); }
@@ -343,6 +368,304 @@ double ApplyMaxLotLimit(double lots, bool &exceeded)
       return lots;
    exceeded = true;
    return InpMaxLotLimit;
+}
+
+//====================================================================
+// ATR Dual Mode helpers
+//====================================================================
+bool EnsureAtrDualHandle()
+{
+   if(gAtrDualHandle != INVALID_HANDLE)
+ZigZag_Hedge_Free.mq5      return true;
+   if(InpATRDualPeriod <= 0 || InpATRTrendThreshold <= 0.0)
+      return false;
+   gAtrDualHandle = iATR(_Symbol, PERIOD_CURRENT, InpATRDualPeriod);
+   if(gAtrDualHandle == INVALID_HANDLE)
+   {
+      if(InpDebugPrint) Print("ATRDual: failed handle err=", GetLastError());
+      return false;
+   }
+   return true;
+}
+
+// Returns current effective lot mode based on dual ATR.
+// Also sets gDualModeTrend flag (true=trend/LOT_MUL, false=sideways/LOT_ADD).
+LOT_MODE GetEffectiveLotMode()
+{
+   if(InpATRDualPeriod <= 0 || InpATRTrendThreshold <= 0.0)
+   {
+      gDualModeTrend = (InpLotMode == LOT_MUL);
+      return InpLotMode;
+   }
+
+   // Throttle by bar
+   datetime barTime = iTime(_Symbol, PERIOD_CURRENT, 0);
+   if(barTime != 0 && barTime == gLastDualAtrBar)
+      return gDualModeTrend ? LOT_MUL : LOT_ADD;
+
+   if(barTime != 0) gLastDualAtrBar = barTime;
+
+   if(!EnsureAtrDualHandle()) { gDualModeTrend = true; return LOT_MUL; }
+
+   double atr[];
+   ArraySetAsSeries(atr, true);
+   int copied = CopyBuffer(gAtrDualHandle, 0, 1, 1, atr);
+   if(copied <= 0) return gDualModeTrend ? LOT_MUL : LOT_ADD;
+
+   double atrPts = (atr[0] > 0.0) ? (atr[0] / _Point) : 0.0;
+   bool wasTrend = gDualModeTrend;
+   gDualModeTrend = (atrPts > InpATRTrendThreshold);
+
+   if(InpDebugPrint && wasTrend != gDualModeTrend)
+      Print("ATRDual: mode switch atrPts=", DoubleToString(atrPts,1),
+            " thr=", DoubleToString(InpATRTrendThreshold,1),
+            " -> ", gDualModeTrend ? "TREND(MUL)" : "SIDEWAYS(ADD)");
+
+   return gDualModeTrend ? LOT_MUL : LOT_ADD;
+}
+
+// In sideways mode (LOT_ADD), the pending direction is reversed:
+// after BUY => place BUY STOP *above* (not SELL STOP below), and vice versa.
+// This allows the grid to alternate on both sides of the range.
+bool IsSidewaysDualMode()
+{
+   if(InpATRDualPeriod <= 0 || InpATRTrendThreshold <= 0.0)
+      return false;
+   GetEffectiveLotMode(); // refresh gDualModeTrend
+   return !gDualModeTrend;
+}
+
+//====================================================================
+// Trailing Stop — only when LOT_ADD effective mode, one side only
+//====================================================================
+void UpdateTrailingStops()
+{
+   if(InpTrailPoints <= 0) return;
+   if(!IsTradeAllowedNow()) return;
+
+   // Only trail when in ADD mode (sideways or manual LOT_ADD)
+   if(GetEffectiveLotMode() != LOT_ADD) return;
+
+   // Count BUY and SELL positions separately
+   int buyCnt = 0, sellCnt = 0;
+   for(int i = PositionsTotal()-1; i >= 0; --i)
+   {
+      ulong t = 0;
+      if(!SelectPosByIndexSafe(i, t)) continue;
+      if((ulong)PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      long type = (long)PositionGetInteger(POSITION_TYPE);
+      if(type == POSITION_TYPE_BUY)  buyCnt++;
+      else                            sellCnt++;
+   }
+
+   // Trail only when one side is active (no consolidation needed yet)
+   bool onlySell  = (sellCnt > 0 && buyCnt == 0);
+   bool onlyBuy   = (buyCnt  > 0 && sellCnt == 0);
+   if(!onlyBuy && !onlySell) return;
+
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   double trailDist = InpTrailPoints * _Point;
+   double stepDist  = (InpTrailStepPoints > 0) ? (InpTrailStepPoints * _Point) : 0.0;
+
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+   for(int i = PositionsTotal()-1; i >= 0; --i)
+   {
+      ulong t = 0;
+      if(!SelectPosByIndexSafe(i, t)) continue;
+      if((ulong)PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+
+      long   type    = (long)PositionGetInteger(POSITION_TYPE);
+      double curSL   = PositionGetDouble(POSITION_SL);
+      double openP   = PositionGetDouble(POSITION_PRICE_OPEN);
+
+      if(type == POSITION_TYPE_BUY)
+      {
+         double newSL = NormalizeDouble(bid - trailDist, digits);
+         // Only move SL up (never down)
+         if(newSL <= curSL) continue;
+         // Respect step filter
+         if(stepDist > 0.0 && (newSL - curSL) < stepDist) continue;
+         // Must be above open to lock profit (or allow from open if SL still 0)
+         trade.PositionModify(t, newSL, PositionGetDouble(POSITION_TP));
+         if(InpDebugPrint) Print("Trail BUY ticket=", (long)t, " newSL=", DoubleToString(newSL, digits));
+      }
+      else if(type == POSITION_TYPE_SELL)
+      {
+         double newSL = NormalizeDouble(ask + trailDist, digits);
+         // Only move SL down (never up from initial)
+         if(curSL > 0.0 && newSL >= curSL) continue;
+         if(stepDist > 0.0 && curSL > 0.0 && (curSL - newSL) < stepDist) continue;
+         trade.PositionModify(t, newSL, PositionGetDouble(POSITION_TP));
+         if(InpDebugPrint) Print("Trail SELL ticket=", (long)t, " newSL=", DoubleToString(newSL, digits));
+      }
+   }
+}
+
+//====================================================================
+// Martingale Consolidation — both sides have ADD positions
+//====================================================================
+ulong GetMartiMagic()
+{
+   if(InpMartiMagic > 0) return (ulong)InpMartiMagic;
+   return InpMagic + 1;
+}
+
+double GetMartiProfitTarget()
+{
+   if(InpMartiProfit > 0.0) return InpMartiProfit;
+   if(InpCloseAllOnProfit && InpProfitTargetMoney > 0.0) return InpProfitTargetMoney;
+   return 5.0; // default $5
+}
+
+// Floating P&L of ALL positions (both magic and marti magic) for this symbol
+double TotalFloatingProfit()
+{
+   double sum = 0.0;
+   ulong magiM = GetMartiMagic();
+   for(int i = PositionsTotal()-1; i >= 0; --i)
+   {
+      ulong t = 0;
+      if(!SelectPosByIndexSafe(i, t)) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      ulong mg = (ulong)PositionGetInteger(POSITION_MAGIC);
+      if(mg != InpMagic && mg != magiM) continue;
+      sum += PositionGetDouble(POSITION_PROFIT);
+   }
+   return sum;
+}
+
+bool MartiPositionExists()
+{
+   if(gMartiTicket == 0) return false;
+   return PositionSelectByTicket(gMartiTicket);
+}
+
+void CloseMartiPosition()
+{
+   if(gMartiTicket == 0) return;
+   if(!IsTradeAllowedNow()) return;
+   if(!PositionSelectByTicket(gMartiTicket)) { gMartiTicket = 0; return; }
+   trade.SetExpertMagicNumber((long)GetMartiMagic());
+   trade.PositionClose(gMartiTicket);
+   trade.SetExpertMagicNumber((long)InpMagic);
+   gMartiTicket = 0;
+}
+
+void CheckMartingaleConsolidation()
+{
+   if(GetEffectiveLotMode() != LOT_ADD) return;
+   if(!IsTradeAllowedNow()) return;
+
+   // Count BUY and SELL lots in the main hedge grid
+   double buyLots = 0.0, sellLots = 0.0;
+   int    buyCnt  = 0,   sellCnt  = 0;
+
+   for(int i = PositionsTotal()-1; i >= 0; --i)
+   {
+      ulong t = 0;
+      if(!SelectPosByIndexSafe(i, t)) continue;
+      if((ulong)PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      long type = (long)PositionGetInteger(POSITION_TYPE);
+      double vol = PositionGetDouble(POSITION_VOLUME);
+      if(type == POSITION_TYPE_BUY)  { buyLots  += vol; buyCnt++; }
+      else                            { sellLots += vol; sellCnt++; }
+   }
+
+   bool bothSides = (buyCnt > 0 && sellCnt > 0);
+
+   // --- Profit check: close everything when target hit ---
+   if(gMartiActive)
+   {
+      double totalPnl = TotalFloatingProfit();
+      double target   = GetMartiProfitTarget();
+
+      if(totalPnl >= target)
+      {
+         Print("🏁 Marti target hit pnl=", DoubleToString(totalPnl,2), " >= ", DoubleToString(target,2), ". Closing all.");
+         // Close consolidation position first
+         CloseMartiPosition();
+         // Cancel pendings and close all grid positions
+         CancelAllPendingsByMagic();
+         CloseAllPositionsByMagic();
+         gMartiActive   = false;
+         gMartiTicket   = 0;
+         return;
+      }
+
+      // If consolidation pos closed externally (SL/TP hit), reopen
+      if(!MartiPositionExists())
+      {
+         gMartiTicket = 0;
+         if(bothSides)
+         {
+            // Will re-open below
+         }
+         else
+         {
+            // One side was cleared — exit consolidation mode
+            gMartiActive = false;
+            return;
+         }
+      }
+      else
+      {
+         // Still open, keep monitoring
+         return;
+      }
+   }
+
+   if(!bothSides) return; // nothing to consolidate
+
+   // Determine momentum direction: bid vs midpoint
+   double midpoint = (gUpperPrice + gLowerPrice) * 0.5;
+   double bid     = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask     = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   ZZ_SIDE martiSide = (bid >= midpoint) ? SIDE_BUY : SIDE_SELL;
+
+   // Combined lot = sum of all grid lots
+   double combinedLot = NormalizeLot(buyLots + sellLots);
+
+   // Cancel opposite pendings to prevent new grid legs during consolidation
+   CancelAllPendingsByMagic();
+
+   // Open consolidation position
+   trade.SetExpertMagicNumber((long)GetMartiMagic());
+   bool ok = false;
+   if(martiSide == SIDE_BUY)
+      ok = trade.Buy(combinedLot, _Symbol, 0.0, 0.0, 0.0, "ZZH_Marti");
+   else
+      ok = trade.Sell(combinedLot, _Symbol, 0.0, 0.0, 0.0, "ZZH_Marti");
+   trade.SetExpertMagicNumber((long)InpMagic);
+
+   if(ok)
+   {
+      gMartiTicket = trade.ResultDeal();
+      // ResultDeal gives deal ticket; we need position ticket — find it
+      // Scan for the newest position with marti magic
+      datetime newest = 0;
+      for(int i = PositionsTotal()-1; i >= 0; --i)
+      {
+         ulong t = 0;
+         if(!SelectPosByIndexSafe(i, t)) continue;
+         if((ulong)PositionGetInteger(POSITION_MAGIC) != GetMartiMagic()) continue;
+         if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+         datetime tm = (datetime)PositionGetInteger(POSITION_TIME);
+         if(tm >= newest) { newest = tm; gMartiTicket = t; }
+      }
+      gMartiActive = true;
+      Print("🔀 Marti open ", (martiSide==SIDE_BUY?"BUY":"SELL"),
+            " lot=", DoubleToString(combinedLot,2),
+            " ticket=", (long)gMartiTicket);
+   }
+   else
+   {
+      Print("❌ Marti open failed retcode=", trade.ResultRetcode(), " err=", GetLastError());
+   }
 }
 
 //====================================================================
@@ -826,7 +1149,8 @@ double GetNextLot_MUL(const double lastVol){ return NormalizeLot(lastVol * InpLo
 
 double GetNextLot(const double lastVol)
 {
-   double nxt = (InpLotMode == LOT_MUL) ? GetNextLot_MUL(lastVol) : GetNextLot_ADD(lastVol);
+   LOT_MODE effMode = GetEffectiveLotMode();
+   double nxt = (effMode == LOT_MUL) ? GetNextLot_MUL(lastVol) : GetNextLot_ADD(lastVol);
    bool exceeded=false;
    nxt = ApplyMaxLotLimit(nxt, exceeded);
    if(exceeded && InpPauseOnMaxLot)
@@ -837,8 +1161,9 @@ double GetNextLot(const double lastVol)
 double GetFirstOppLot()
 {
    double lot;
+   LOT_MODE effMode = GetEffectiveLotMode();
    if(InpFirstOppLot > 0.0) lot = NormalizeLot(InpFirstOppLot);
-   else if(InpLotMode == LOT_MUL) lot = NormalizeLot(InpStartLot * InpLotMultiplier);
+   else if(effMode == LOT_MUL) lot = NormalizeLot(InpStartLot * InpLotMultiplier);
    else lot = NormalizeLot(InpStartLot + InpLotAdd);
 
    bool exceeded=false;
