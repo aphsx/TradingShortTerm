@@ -376,7 +376,7 @@ double ApplyMaxLotLimit(double lots, bool &exceeded)
 bool EnsureAtrDualHandle()
 {
    if(gAtrDualHandle != INVALID_HANDLE)
-ZigZag_Hedge_Free.mq5      return true;
+      return true;
    if(InpATRDualPeriod <= 0 || InpATRTrendThreshold <= 0.0)
       return false;
    gAtrDualHandle = iATR(_Symbol, PERIOD_CURRENT, InpATRDualPeriod);
